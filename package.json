@@ -9,7 +9,8 @@
     "dev:all": "concurrently \"npm run dev\" \"npm run server\"",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "setup:vosk": "pip3 install vosk pyaudio && mkdir -p models && cd models && curl -LO https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip && unzip vosk-model-small-en-us-0.15.zip && mv vosk-model-small-en-us-0.15 vosk-model-en-us-small"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",
@@ -29,7 +30,8 @@
     "puppeteer": "^24.8.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.5.3"
+    "react-router-dom": "^7.5.3",
+    "vosk": "^0.3.39"
   },
   "devDependencies": {
     "@eslint/js": "^9.22.0",

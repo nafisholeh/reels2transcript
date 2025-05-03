@@ -9,7 +9,7 @@ import path from 'path';
 
 // Import utilities
 import { extractInstagramReelData, cleanupTempFiles } from './utils/instagramExtractor.js';
-import { transcribeAudio } from './utils/transcriptionService.js';
+import { transcribeAudioWithVosk, extractAudioFromVideo, cleanupTempFiles as cleanupVoskFiles } from './utils/voskTranscriber.js';
 import { formatOutput } from './utils/formatOutput.js';
 
 // Get current file path (ES modules)
@@ -54,8 +54,11 @@ app.post('/api/extract/single', async (req, res) => {
     // Extract data from Instagram Reel
     const extractedData = await extractInstagramReelData(url);
 
-    // Transcribe audio from video
-    const transcription = await transcribeAudio(extractedData.videoPath, {
+    // Extract audio from video
+    const audioPath = await extractAudioFromVideo(extractedData.videoPath);
+
+    // Transcribe audio using Vosk
+    const transcription = await transcribeAudioWithVosk(audioPath, {
       style: options?.style || 'clean',
       includeTimestamps: options?.includeTimestamps || false
     });
@@ -70,6 +73,7 @@ app.post('/api/extract/single', async (req, res) => {
 
     // Clean up temporary files
     cleanupTempFiles(extractedData.videoPath);
+    cleanupVoskFiles(audioPath);
 
     // Return response
     res.status(200).json({
@@ -121,8 +125,11 @@ app.post('/api/extract/bulk', async (req, res) => {
         // Extract data from Instagram Reel
         const extractedData = await extractInstagramReelData(url);
 
-        // Transcribe audio from video
-        const transcription = await transcribeAudio(extractedData.videoPath, {
+        // Extract audio from video
+        const audioPath = await extractAudioFromVideo(extractedData.videoPath);
+
+        // Transcribe audio using Vosk
+        const transcription = await transcribeAudioWithVosk(audioPath, {
           style: options?.style || 'clean',
           includeTimestamps: options?.includeTimestamps || false
         });
@@ -146,6 +153,7 @@ app.post('/api/extract/bulk', async (req, res) => {
 
         // Clean up temporary files
         cleanupTempFiles(extractedData.videoPath);
+        cleanupVoskFiles(audioPath);
       } catch (error) {
         // If one URL fails, continue with the others
         console.error(`Error processing URL ${url}:`, error);

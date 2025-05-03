@@ -16,7 +16,7 @@ A web application that allows users to extract speech transcriptions and caption
 - Frontend: React.js with Material-UI
 - Backend: Node.js with Express
 - API Integration: Instagram data extraction
-- Speech Recognition: Transcription processing
+- Speech Recognition: Vosk (offline speech recognition)
 
 ## Getting Started
 
@@ -24,6 +24,8 @@ A web application that allows users to extract speech transcriptions and caption
 
 - Node.js (v14 or higher)
 - npm or yarn
+- Python 3.6 or higher
+- FFmpeg (for audio extraction)
 
 ### Installation
 
@@ -33,14 +35,23 @@ A web application that allows users to extract speech transcriptions and caption
    cd reels2transcript
    ```
 
-2. Install dependencies
+2. Install Node.js dependencies
    ```
    npm install
    ```
 
-3. Start the development server
+3. Set up Vosk for speech recognition
    ```
-   npm run dev
+   npm run setup:vosk
+   ```
+
+   This will:
+   - Install the required Python packages (vosk, pyaudio)
+   - Download and extract the Vosk English model
+
+4. Start the development server
+   ```
+   npm run dev:all
    ```
 
 ## Usage
