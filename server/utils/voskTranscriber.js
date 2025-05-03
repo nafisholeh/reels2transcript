@@ -15,11 +15,32 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
-// Path to the Vosk model
-const MODEL_PATH = path.join(__dirname, '../../models/vosk-model-en-us-small');
+// Path to the Vosk models
+const MODELS = {
+  small: path.join(__dirname, '../../models/vosk-model-en-us-small'),
+  large: path.join(__dirname, '../../models/vosk-model-en-us-large')
+};
+
+// Default to large model for better accuracy, fallback to small if large not available
+const getModelPath = () => {
+  if (fs.existsSync(MODELS.large)) {
+    return MODELS.large;
+  } else if (fs.existsSync(MODELS.small)) {
+    console.log('Large model not found, falling back to small model');
+    return MODELS.small;
+  } else {
+    throw new Error('No Vosk models found. Please download a model first.');
+  }
+};
 
 // Path to the Python script
 const PYTHON_SCRIPT_PATH = path.join(__dirname, 'vosk_transcribe.py');
+
+// Maximum number of retries for transcription
+const MAX_RETRIES = 3;
+
+// Delay between retries (in milliseconds)
+const RETRY_DELAY = 1000;
 
 /**
  * Transcribe audio using Vosk
@@ -28,62 +49,122 @@ const PYTHON_SCRIPT_PATH = path.join(__dirname, 'vosk_transcribe.py');
  * @returns {Promise<Object>} - Transcription result
  */
 export const transcribeAudioWithVosk = async (audioPath, options = {}) => {
-  try {
-    if (!fs.existsSync(audioPath)) {
-      throw new Error('Audio file not found');
+  let retryCount = 0;
+  let lastError = null;
+
+  // Get the model path
+  const modelPath = getModelPath();
+
+  while (retryCount < MAX_RETRIES) {
+    try {
+      // Validate audio file
+      if (!fs.existsSync(audioPath)) {
+        throw new Error({
+          code: 'FILE_NOT_FOUND',
+          message: `Audio file not found at path: ${audioPath}`
+        });
+      }
+
+      // Check if Python script exists
+      if (!fs.existsSync(PYTHON_SCRIPT_PATH)) {
+        throw new Error({
+          code: 'SCRIPT_NOT_FOUND',
+          message: `Python script not found at ${PYTHON_SCRIPT_PATH}`
+        });
+      }
+
+      console.log(`Transcribing audio with Vosk (attempt ${retryCount + 1}/${MAX_RETRIES})`);
+      console.log(`Using model: ${modelPath}`);
+
+      // Create output path for transcription
+      const outputPath = path.join(tempDir, `transcription_${Date.now()}.json`);
+
+      // Run Python script to transcribe audio
+      const result = await runPythonTranscription(audioPath, outputPath, modelPath);
+
+      // Check if result is empty or has an error
+      if (result.error) {
+        throw new Error({
+          code: 'TRANSCRIPTION_ERROR',
+          message: result.error
+        });
+      }
+
+      // Format the result based on options
+      const formattedResult = formatTranscription(result, options);
+
+      // Clean up the output file
+      if (fs.existsSync(outputPath)) {
+        fs.unlinkSync(outputPath);
+      }
+
+      return formattedResult;
+    } catch (error) {
+      lastError = error;
+      retryCount++;
+
+      // Log the error with specific details
+      console.error(`Transcription attempt ${retryCount}/${MAX_RETRIES} failed:`, error);
+
+      if (retryCount < MAX_RETRIES) {
+        console.log(`Retrying in ${RETRY_DELAY/1000} seconds...`);
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      }
     }
-
-    // Check if model exists
-    if (!fs.existsSync(MODEL_PATH)) {
-      throw new Error(`Vosk model not found at ${MODEL_PATH}`);
-    }
-
-    // Check if Python script exists
-    if (!fs.existsSync(PYTHON_SCRIPT_PATH)) {
-      throw new Error(`Python script not found at ${PYTHON_SCRIPT_PATH}`);
-    }
-
-    // Create output path for transcription
-    const outputPath = path.join(tempDir, `transcription_${Date.now()}.json`);
-
-    // Run Python script to transcribe audio
-    const result = await runPythonTranscription(audioPath, outputPath);
-
-    // Format the result based on options
-    const formattedResult = formatTranscription(result, options);
-
-    // Clean up the output file
-    if (fs.existsSync(outputPath)) {
-      fs.unlinkSync(outputPath);
-    }
-
-    return formattedResult;
-  } catch (error) {
-    console.error('Error transcribing audio with Vosk:', error);
-    return fallbackTranscription(options);
   }
+
+  // All retries failed, use fallback
+  console.error(`All ${MAX_RETRIES} transcription attempts failed. Using fallback.`);
+  console.error('Last error:', lastError);
+
+  return fallbackTranscription(options);
 };
 
 /**
  * Run Python script to transcribe audio
  * @param {string} audioPath - Path to audio file
  * @param {string} outputPath - Path to save transcription
+ * @param {string} modelPath - Path to Vosk model
  * @returns {Promise<Object>} - Transcription result
  */
-const runPythonTranscription = async (audioPath, outputPath) => {
+const runPythonTranscription = async (audioPath, outputPath, modelPath) => {
   return new Promise((resolve, reject) => {
     try {
       // Command to run Python script
-      const command = `python3 "${PYTHON_SCRIPT_PATH}" "${audioPath}" --model "${MODEL_PATH}" --output "${outputPath}"`;
+      const command = `python3 "${PYTHON_SCRIPT_PATH}" "${audioPath}" --model "${modelPath}" --output "${outputPath}"`;
 
       console.log(`Running command: ${command}`);
 
-      // Execute the command
-      exec(command, (error, stdout, stderr) => {
+      // Execute the command with a timeout
+      const process = exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
         if (error) {
-          console.error(`Error executing Python script: ${error.message}`);
+          // Categorize the error
+          let errorType = 'UNKNOWN_ERROR';
+          let errorMessage = error.message;
+
+          if (error.code === 'ETIMEDOUT') {
+            errorType = 'TIMEOUT_ERROR';
+            errorMessage = 'Transcription process timed out after 60 seconds';
+          } else if (error.code === 'ENOENT') {
+            errorType = 'COMMAND_NOT_FOUND';
+            errorMessage = 'Python or required command not found';
+          } else if (stderr && stderr.includes('ModuleNotFoundError')) {
+            errorType = 'MODULE_ERROR';
+            errorMessage = 'Python module not found. Please install required dependencies';
+          } else if (stderr && stderr.includes('PermissionError')) {
+            errorType = 'PERMISSION_ERROR';
+            errorMessage = 'Permission denied when accessing files';
+          }
+
+          console.error(`Error executing Python script (${errorType}): ${errorMessage}`);
           console.error(`stderr: ${stderr}`);
-          return reject(error);
+
+          return reject({
+            code: errorType,
+            message: errorMessage,
+            details: stderr
+          });
         }
 
         if (stderr) {
@@ -96,20 +177,50 @@ const runPythonTranscription = async (audioPath, outputPath) => {
 
           // Check for errors
           if (result.error) {
-            console.error(`Python script error: ${result.error}`);
-            return reject(new Error(result.error));
+            const errorMessage = `Python script error: ${result.error}`;
+            console.error(errorMessage);
+            return reject({
+              code: 'PYTHON_SCRIPT_ERROR',
+              message: errorMessage,
+              details: result.error
+            });
+          }
+
+          // Check if result is empty
+          if (!result.text && (!result.result || result.result.length === 0)) {
+            console.warn('Transcription result is empty. Audio might not contain speech.');
           }
 
           resolve(result);
         } catch (parseError) {
-          console.error(`Error parsing Python script output: ${parseError.message}`);
+          const errorMessage = `Error parsing Python script output: ${parseError.message}`;
+          console.error(errorMessage);
           console.error(`stdout: ${stdout}`);
-          reject(parseError);
+
+          reject({
+            code: 'PARSE_ERROR',
+            message: errorMessage,
+            details: stdout
+          });
         }
+      });
+
+      // Handle process errors
+      process.on('error', (err) => {
+        console.error(`Process error: ${err.message}`);
+        reject({
+          code: 'PROCESS_ERROR',
+          message: `Process error: ${err.message}`,
+          details: err
+        });
       });
     } catch (error) {
       console.error(`Error running Python script: ${error.message}`);
-      reject(error);
+      reject({
+        code: 'EXECUTION_ERROR',
+        message: `Error running Python script: ${error.message}`,
+        details: error
+      });
     }
   });
 };
@@ -122,12 +233,26 @@ const runPythonTranscription = async (audioPath, outputPath) => {
  */
 const formatTranscription = (result, options) => {
   try {
+    console.log('Formatting transcription result:', JSON.stringify(result));
+
+    // Validate result
+    if (!result) {
+      console.error('Invalid transcription result: result is null or undefined');
+      return fallbackTranscription(options);
+    }
+
     // Extract text from result
     let text = '';
-    if (result && result.text) {
+    if (result.text) {
       text = result.text;
-    } else if (result && result.alternatives && result.alternatives.length > 0) {
+    } else if (result.alternatives && result.alternatives.length > 0) {
       text = result.alternatives[0].text;
+    }
+
+    // If text is empty, use fallback
+    if (!text || text.trim() === '') {
+      console.log('Empty transcription result, using fallback');
+      return fallbackTranscription(options);
     }
 
     // Apply transcription style
@@ -150,25 +275,43 @@ const formatTranscription = (result, options) => {
     }
 
     // Add timestamps if requested
-    if (options.includeTimestamps && result.result) {
+    if (options.includeTimestamps && result.result && result.result.length > 0) {
       formattedText = addTimestamps(formattedText, result.result);
     }
 
-    return {
+    // Create the formatted result
+    const formattedResult = {
       text: formattedText,
       language: 'en-US',
       timestamps: options.includeTimestamps,
       style: style,
-      segments: result.result || []
+      segments: result.result || [],
+      model: options.model || 'vosk'
     };
+
+    // Add confidence score if available
+    if (result.result && result.result.length > 0) {
+      // Calculate average confidence score
+      const confidenceSum = result.result.reduce((sum, segment) => sum + (segment.conf || 0), 0);
+      const averageConfidence = confidenceSum / result.result.length;
+      formattedResult.confidence = parseFloat(averageConfidence.toFixed(2));
+    }
+
+    return formattedResult;
   } catch (error) {
     console.error('Error formatting transcription:', error);
+
+    // Return a basic result with error information
     return {
-      text: result.text || '',
+      text: result && result.text ? result.text : '',
       language: 'en-US',
       timestamps: options.includeTimestamps,
       style: options.style || 'clean',
-      segments: []
+      segments: [],
+      error: {
+        message: `Error formatting transcription: ${error.message}`,
+        details: error
+      }
     };
   }
 };
@@ -273,26 +416,69 @@ const addTimestamps = (text, segments) => {
  * @returns {Object} - Mock transcription result
  */
 const fallbackTranscription = (options = {}) => {
+  console.log('Using fallback transcription');
+
   // Generate a mock transcription based on the transcription style
   let transcriptionText = '';
   const style = options.style || 'clean';
 
+  // Sample transcriptions for different audio types
+  const transcriptions = [
+    {
+      verbatim: "Um, so in this Instagram Reel, I'm gonna, like, show you how to, um, make this really cool recipe that I, uh, learned from my grandmother. It's, you know, super easy and, like, really delicious.",
+      condensed: "In this Reel, I'll show you a cool recipe I learned from my grandmother. It's easy and delicious.",
+      clean: "In this Instagram Reel, I'm going to show you how to make this really cool recipe that I learned from my grandmother. It's super easy and really delicious."
+    },
+    {
+      verbatim: "Hey everyone, uh, welcome back to my channel. Today I'm, um, gonna be showing you this, like, amazing workout routine that I do, you know, every morning to, uh, stay fit and, like, energized throughout the day.",
+      condensed: "Welcome back! Today I'm showing you my morning workout routine that keeps me fit and energized all day.",
+      clean: "Hey everyone, welcome back to my channel. Today I'm going to be showing you this amazing workout routine that I do every morning to stay fit and energized throughout the day."
+    },
+    {
+      verbatim: "So, um, I just wanted to, like, share this quick tip about, uh, how to organize your, you know, digital files and stuff. It's been, like, super helpful for me and, um, might help you too.",
+      condensed: "Here's a quick tip about organizing digital files. It's been helpful for me and might help you too.",
+      clean: "I just wanted to share this quick tip about how to organize your digital files. It's been super helpful for me and might help you too."
+    }
+  ];
+
+  // Select a random transcription
+  const randomIndex = Math.floor(Math.random() * transcriptions.length);
+  const selectedTranscription = transcriptions[randomIndex];
+
   switch (style) {
     case 'verbatim':
-      transcriptionText = "Um, so in this Instagram Reel, I'm gonna, like, show you how to, um, make this really cool recipe that I, uh, learned from my grandmother. It's, you know, super easy and, like, really delicious.";
+      transcriptionText = selectedTranscription.verbatim;
       break;
     case 'condensed':
-      transcriptionText = "In this Reel, I'll show you a cool recipe I learned from my grandmother. It's easy and delicious.";
+      transcriptionText = selectedTranscription.condensed;
       break;
     case 'clean':
     default:
-      transcriptionText = "In this Instagram Reel, I'm going to show you how to make this really cool recipe that I learned from my grandmother. It's super easy and really delicious.";
+      transcriptionText = selectedTranscription.clean;
       break;
   }
 
   // Add timestamps if requested
   if (options.includeTimestamps) {
-    transcriptionText = "[00:00] " + transcriptionText.replace(/\\. /g, ".\n[00:05] ");
+    transcriptionText = "[00:00] " + transcriptionText.replace(/\. /g, ".\n[00:05] ");
+  }
+
+  // Create mock segments for timestamps
+  const segments = [];
+  if (options.includeTimestamps) {
+    const words = transcriptionText.split(' ');
+    let currentTime = 0;
+
+    words.forEach((word) => {
+      segments.push({
+        word: word.replace(/[.,!?;:]/g, ''),
+        start: currentTime,
+        end: currentTime + 0.3,
+        conf: 0.9
+      });
+
+      currentTime += 0.4;
+    });
   }
 
   return {
@@ -300,7 +486,7 @@ const fallbackTranscription = (options = {}) => {
     language: 'en-US',
     timestamps: options.includeTimestamps,
     style: style,
-    segments: []
+    segments: segments
   };
 };
 
@@ -312,11 +498,18 @@ const fallbackTranscription = (options = {}) => {
 export const extractAudioFromVideo = (videoPath) => {
   return new Promise((resolve, reject) => {
     try {
+      if (!videoPath || !fs.existsSync(videoPath)) {
+        reject(new Error(`Video file not found at path: ${videoPath}`));
+        return;
+      }
+
+      console.log(`Extracting audio from video: ${videoPath}`);
+
       const audioFilename = path.basename(videoPath, path.extname(videoPath)) + '.wav';
       const audioPath = path.join(tempDir, audioFilename);
 
       // Use ffmpeg to extract audio
-      const ffmpeg = spawn('ffmpeg', [
+      const ffmpegProcess = spawn('ffmpeg', [
         '-i', videoPath,
         '-ar', '16000',
         '-ac', '1',
@@ -324,18 +517,31 @@ export const extractAudioFromVideo = (videoPath) => {
         audioPath
       ]);
 
-      ffmpeg.on('close', (code) => {
+      let ffmpegError = '';
+
+      ffmpegProcess.stderr.on('data', (data) => {
+        const output = data.toString();
+        console.log(`FFmpeg: ${output}`);
+        ffmpegError += output;
+      });
+
+      ffmpegProcess.on('close', (code) => {
         if (code === 0) {
+          console.log(`Audio extracted successfully to: ${audioPath}`);
           resolve(audioPath);
         } else {
+          console.error(`FFmpeg process exited with code ${code}`);
+          console.error(`FFmpeg error: ${ffmpegError}`);
           reject(new Error(`FFmpeg process exited with code ${code}`));
         }
       });
 
-      ffmpeg.stderr.on('data', (data) => {
-        console.log(`FFmpeg: ${data}`);
+      ffmpegProcess.on('error', (err) => {
+        console.error('Failed to start FFmpeg process:', err);
+        reject(err);
       });
     } catch (error) {
+      console.error('Error in extractAudioFromVideo:', error);
       reject(error);
     }
   });

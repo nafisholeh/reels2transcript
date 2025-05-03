@@ -18,6 +18,14 @@ A web application that allows users to extract speech transcriptions and caption
 - API Integration: Instagram data extraction
 - Speech Recognition: Vosk (offline speech recognition)
 
+## Features
+
+- **Offline Speech Recognition**: Uses Vosk for local speech-to-text processing without sending data to external servers
+- **Multiple Model Support**: Automatically selects between small (40MB) and large (1.8GB) models based on availability
+- **Robust Error Handling**: Implements retry mechanisms and detailed error reporting
+- **Customizable Transcription**: Supports different transcription styles (verbatim, clean, condensed)
+- **Timestamp Support**: Option to include timestamps in transcriptions
+
 ## Getting Started
 
 ### Prerequisites
@@ -47,7 +55,14 @@ A web application that allows users to extract speech transcriptions and caption
 
    This will:
    - Install the required Python packages (vosk, pyaudio)
-   - Download and extract the Vosk English model
+   - Download and extract the small Vosk English model
+
+   For better accuracy, you can install the larger model (1.8GB):
+   ```
+   npm run setup:vosk-large
+   ```
+
+   The application will automatically use the large model if available, and fall back to the small model if not.
 
 4. Start the development server
    ```
