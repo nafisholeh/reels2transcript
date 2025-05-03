@@ -4,10 +4,23 @@ import bodyParser from 'body-parser';
 import dotenv from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import fs from 'fs';
+import path from 'path';
+
+// Import utilities
+import { extractInstagramReelData, cleanupTempFiles } from './utils/instagramExtractor.js';
+import { transcribeAudio } from './utils/transcriptionService.js';
+import { formatOutput } from './utils/formatOutput.js';
 
 // Get current file path (ES modules)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Create temp directory if it doesn't exist
+const tempDir = path.join(__dirname, '../temp');
+if (!fs.existsSync(tempDir)) {
+  fs.mkdirSync(tempDir, { recursive: true });
+}
 
 // Load environment variables
 dotenv.config();
@@ -26,7 +39,7 @@ app.get('/api/health', (req, res) => {
 });
 
 // API route for processing a single Instagram Reel URL
-app.post('/api/extract/single', (req, res) => {
+app.post('/api/extract/single', async (req, res) => {
   const { url, options } = req.body;
 
   // Validate URL
@@ -37,24 +50,49 @@ app.post('/api/extract/single', (req, res) => {
     });
   }
 
-  // TODO: Implement actual extraction logic
-  // This is a placeholder response
-  const mockResponse = {
-    success: true,
-    data: {
-      url: url,
-      transcription: "This is a mock transcription for the provided Instagram Reel.",
-      caption: "This is a mock caption for the provided Instagram Reel. #reels #instagram",
-      timestamp: new Date().toISOString(),
-      options: options || {}
-    }
-  };
+  try {
+    // Extract data from Instagram Reel
+    const extractedData = await extractInstagramReelData(url);
 
-  res.status(200).json(mockResponse);
+    // Transcribe audio from video
+    const transcription = await transcribeAudio(extractedData.videoPath, {
+      style: options?.style || 'clean',
+      includeTimestamps: options?.includeTimestamps || false
+    });
+
+    // Format output
+    const formattedOutput = formatOutput({
+      url: extractedData.url,
+      caption: extractedData.caption,
+      transcription: transcription,
+      timestamp: extractedData.timestamp
+    }, options?.format || 'plain');
+
+    // Clean up temporary files
+    cleanupTempFiles(extractedData.videoPath);
+
+    // Return response
+    res.status(200).json({
+      success: true,
+      data: {
+        url: extractedData.url,
+        transcription: transcription.text,
+        caption: extractedData.caption,
+        timestamp: extractedData.timestamp,
+        formattedOutput: formattedOutput
+      }
+    });
+  } catch (error) {
+    console.error('Error processing Instagram Reel:', error);
+    res.status(500).json({
+      error: 'Processing Error',
+      message: error.message || 'An error occurred while processing the Instagram Reel'
+    });
+  }
 });
 
 // API route for processing multiple Instagram Reel URLs
-app.post('/api/extract/bulk', (req, res) => {
+app.post('/api/extract/bulk', async (req, res) => {
   const { urls, options } = req.body;
 
   // Validate URLs
@@ -65,21 +103,73 @@ app.post('/api/extract/bulk', (req, res) => {
     });
   }
 
-  // TODO: Implement actual bulk extraction logic
-  // This is a placeholder response
-  const mockResponses = urls.map(url => ({
-    url: url,
-    transcription: `This is a mock transcription for ${url}`,
-    caption: `This is a mock caption for ${url}. #reels #instagram`,
-    timestamp: new Date().toISOString(),
-    options: options || {}
-  }));
+  // Limit the number of URLs to process
+  const maxUrls = 50;
+  if (urls.length > maxUrls) {
+    return res.status(400).json({
+      error: 'Too Many URLs',
+      message: `You can process a maximum of ${maxUrls} URLs at once`
+    });
+  }
 
-  res.status(200).json({
-    success: true,
-    count: mockResponses.length,
-    data: mockResponses
-  });
+  try {
+    // Process URLs sequentially to avoid overloading the server
+    const results = [];
+
+    for (const url of urls) {
+      try {
+        // Extract data from Instagram Reel
+        const extractedData = await extractInstagramReelData(url);
+
+        // Transcribe audio from video
+        const transcription = await transcribeAudio(extractedData.videoPath, {
+          style: options?.style || 'clean',
+          includeTimestamps: options?.includeTimestamps || false
+        });
+
+        // Format output
+        const formattedOutput = formatOutput({
+          url: extractedData.url,
+          caption: extractedData.caption,
+          transcription: transcription,
+          timestamp: extractedData.timestamp
+        }, options?.format || 'plain');
+
+        // Add to results
+        results.push({
+          url: extractedData.url,
+          transcription: transcription.text,
+          caption: extractedData.caption,
+          timestamp: extractedData.timestamp,
+          formattedOutput: formattedOutput
+        });
+
+        // Clean up temporary files
+        cleanupTempFiles(extractedData.videoPath);
+      } catch (error) {
+        // If one URL fails, continue with the others
+        console.error(`Error processing URL ${url}:`, error);
+        results.push({
+          url: url,
+          error: error.message || 'An error occurred while processing this URL',
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+
+    // Return response
+    res.status(200).json({
+      success: true,
+      count: results.length,
+      data: results
+    });
+  } catch (error) {
+    console.error('Error processing bulk URLs:', error);
+    res.status(500).json({
+      error: 'Processing Error',
+      message: error.message || 'An error occurred while processing the URLs'
+    });
+  }
 });
 
 // Start server
