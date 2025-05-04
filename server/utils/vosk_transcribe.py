@@ -9,6 +9,10 @@ import time
 import traceback
 from vosk import Model, KaldiRecognizer, SetLogLevel
 
+# Function to print to stderr for logging
+def log(message):
+    print(message, file=sys.stderr, flush=True)
+
 def check_dependencies():
     """
     Check if all required dependencies are installed
@@ -95,14 +99,14 @@ def transcribe_audio(audio_path, model_path, output_path=None):
         # Set log level to suppress debug messages
         SetLogLevel(-1)
 
-        print(f"Loading model from {model_path}...")
+        log(f"Loading model from {model_path}...")
         start_time = time.time()
 
         # Load model
         model = Model(model_path)
 
         model_load_time = time.time() - start_time
-        print(f"Model loaded in {model_load_time:.2f} seconds")
+        log(f"Model loaded in {model_load_time:.2f} seconds")
 
         # Open audio file
         wf = wave.open(audio_path, "rb")
@@ -113,17 +117,17 @@ def transcribe_audio(audio_path, model_path, output_path=None):
         audio_sample_width = wf.getsampwidth()
         audio_framerate = wf.getframerate()
 
-        print(f"Audio duration: {audio_duration:.2f} seconds")
-        print(f"Audio channels: {audio_channels}")
-        print(f"Audio sample width: {audio_sample_width}")
-        print(f"Audio framerate: {audio_framerate} Hz")
+        log(f"Audio duration: {audio_duration:.2f} seconds")
+        log(f"Audio channels: {audio_channels}")
+        log(f"Audio sample width: {audio_sample_width}")
+        log(f"Audio framerate: {audio_framerate} Hz")
 
         # Create recognizer
         rec = KaldiRecognizer(model, wf.getframerate())
         rec.SetWords(True)
 
         # Process audio
-        print("Processing audio...")
+        log("Processing audio...")
         transcription_start_time = time.time()
 
         results = []
@@ -140,7 +144,7 @@ def transcribe_audio(audio_path, model_path, output_path=None):
         results.append(part_result)
 
         transcription_time = time.time() - transcription_start_time
-        print(f"Audio processed in {transcription_time:.2f} seconds")
+        log(f"Audio processed in {transcription_time:.2f} seconds")
 
         # Combine results
         full_result = {
@@ -157,6 +161,22 @@ def transcribe_audio(audio_path, model_path, output_path=None):
         if full_result["result"]:
             full_result["result"].sort(key=lambda x: x.get("start", 0))
 
+            # Always construct text from segments as a backup
+            # This ensures we have text even if the recognizer didn't provide it
+            log("Constructing text from segments")
+            segments_text = " ".join([segment.get("word", "") for segment in full_result["result"]])
+
+            # If text is empty or just whitespace, use the segments text
+            if not full_result["text"] or full_result["text"].strip() == "":
+                log("Text field is empty, using text constructed from segments")
+                full_result["text"] = segments_text
+            else:
+                log(f"Text field has content: '{full_result['text']}'")
+                # If the text from segments is significantly longer, use it instead
+                if len(segments_text) > len(full_result["text"]) * 1.5:
+                    log("Text from segments is significantly longer, using it instead")
+                    full_result["text"] = segments_text
+
         # Add metadata
         full_result["metadata"] = {
             "audio_duration": audio_duration,
@@ -171,15 +191,15 @@ def transcribe_audio(audio_path, model_path, output_path=None):
         if output_path:
             with open(output_path, "w") as f:
                 json.dump(full_result, f, indent=2)
-            print(f"Transcription saved to {output_path}")
+            log(f"Transcription saved to {output_path}")
 
         return full_result
 
     except Exception as e:
         error_message = str(e)
         error_traceback = traceback.format_exc()
-        print(f"Error transcribing audio: {error_message}")
-        print(error_traceback)
+        log(f"Error transcribing audio: {error_message}")
+        log(error_traceback)
 
         return {
             "error": error_message,
@@ -190,7 +210,7 @@ def transcribe_audio(audio_path, model_path, output_path=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Transcribe audio using Vosk")
     parser.add_argument("audio_path", help="Path to audio file")
-    parser.add_argument("--model", default="../../models/vosk-model-en-us-large", help="Path to Vosk model")
+    parser.add_argument("--model", default="models/vosk-model-en-us-large", help="Path to Vosk model")
     parser.add_argument("--output", help="Path to save transcription")
 
     args = parser.parse_args()

@@ -17,24 +17,30 @@ if (!fs.existsSync(tempDir)) {
 
 // Path to the Vosk models
 const MODELS = {
-  small: path.join(__dirname, '../../models/vosk-model-en-us-small'),
-  large: path.join(__dirname, '../../models/vosk-model-en-us-large')
+  small: path.join(process.cwd(), 'models/vosk-model-en-us-small'),
+  large: path.join(process.cwd(), 'models/vosk-model-en-us-large')
 };
 
 // Default to large model for better accuracy, fallback to small if large not available
 const getModelPath = () => {
+  console.log(`Checking for large model at: ${MODELS.large}`);
+  console.log(`Checking for small model at: ${MODELS.small}`);
+
   if (fs.existsSync(MODELS.large)) {
+    console.log('Large model found');
     return MODELS.large;
   } else if (fs.existsSync(MODELS.small)) {
     console.log('Large model not found, falling back to small model');
     return MODELS.small;
   } else {
+    console.error('No Vosk models found at the expected paths');
     throw new Error('No Vosk models found. Please download a model first.');
   }
 };
 
 // Path to the Python script
 const PYTHON_SCRIPT_PATH = path.join(__dirname, 'vosk_transcribe.py');
+console.log(`Python script path: ${PYTHON_SCRIPT_PATH}`);
 
 // Maximum number of retries for transcription
 const MAX_RETRIES = 3;
@@ -132,12 +138,14 @@ const runPythonTranscription = async (audioPath, outputPath, modelPath) => {
   return new Promise((resolve, reject) => {
     try {
       // Command to run Python script
-      const command = `python3 "${PYTHON_SCRIPT_PATH}" "${audioPath}" --model "${modelPath}" --output "${outputPath}"`;
+      const cwd = process.cwd();
+      const command = `cd "${cwd}" && python3 "${PYTHON_SCRIPT_PATH}" "${audioPath}" --model "${modelPath}" --output "${outputPath}"`;
 
       console.log(`Running command: ${command}`);
+      console.log(`Current working directory: ${cwd}`);
 
       // Execute the command with a timeout
-      const process = exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
+      const childProcess = exec(command, { timeout: 60000 }, (error, stdout, stderr) => {
         if (error) {
           // Categorize the error
           let errorType = 'UNKNOWN_ERROR';
@@ -167,13 +175,26 @@ const runPythonTranscription = async (audioPath, outputPath, modelPath) => {
           });
         }
 
+        // Log stderr as debug information
         if (stderr) {
-          console.warn(`Python script warnings: ${stderr}`);
+          console.log(`Python script logs: ${stderr}`);
         }
 
         try {
-          // Parse the output
-          const result = JSON.parse(stdout);
+          // Parse the output - stdout should now contain only the JSON result
+          const trimmedOutput = stdout.trim();
+          if (!trimmedOutput) {
+            console.warn('Empty output from Python script');
+            return reject({
+              code: 'EMPTY_OUTPUT',
+              message: 'Python script returned empty output',
+              details: stderr
+            });
+          }
+
+          const result = JSON.parse(trimmedOutput);
+
+          console.log('Parsed JSON result from Python script:', JSON.stringify(result, null, 2));
 
           // Check for errors
           if (result.error) {
@@ -189,6 +210,9 @@ const runPythonTranscription = async (audioPath, outputPath, modelPath) => {
           // Check if result is empty
           if (!result.text && (!result.result || result.result.length === 0)) {
             console.warn('Transcription result is empty. Audio might not contain speech.');
+
+            // Ensure result has a text property even if empty
+            result.text = result.text || '';
           }
 
           resolve(result);
@@ -206,7 +230,7 @@ const runPythonTranscription = async (audioPath, outputPath, modelPath) => {
       });
 
       // Handle process errors
-      process.on('error', (err) => {
+      childProcess.on('error', (err) => {
         console.error(`Process error: ${err.message}`);
         reject({
           code: 'PROCESS_ERROR',
@@ -243,13 +267,33 @@ const formatTranscription = (result, options) => {
 
     // Extract text from result
     let text = '';
-    if (result.text) {
+    if (result.text && result.text.trim() !== '') {
       text = result.text;
+      console.log('Using text from result.text:', text);
     } else if (result.alternatives && result.alternatives.length > 0) {
       text = result.alternatives[0].text;
+      console.log('Using text from result.alternatives:', text);
+    } else if (result.result && result.result.length > 0) {
+      // Construct text from segments if text field is empty
+      console.log('Constructing text from segments');
+
+      // Sort segments by start time
+      const sortedSegments = [...result.result].sort((a, b) => a.start - b.start);
+
+      // Join words from segments
+      text = sortedSegments.map(segment => segment.word).join(' ');
+      console.log(`Constructed text from ${sortedSegments.length} segments: "${text}"`);
     }
 
-    // If text is empty, use fallback
+    // Always check if we need to construct text from segments
+    if ((!text || text.trim() === '') && result.result && result.result.length > 0) {
+      console.log('Text is still empty, constructing from segments as fallback');
+      const sortedSegments = [...result.result].sort((a, b) => a.start - b.start);
+      text = sortedSegments.map(segment => segment.word).join(' ');
+      console.log(`Constructed text from ${sortedSegments.length} segments: "${text}"`);
+    }
+
+    // If text is still empty, use fallback
     if (!text || text.trim() === '') {
       console.log('Empty transcription result, using fallback');
       return fallbackTranscription(options);
@@ -281,13 +325,33 @@ const formatTranscription = (result, options) => {
 
     // Create the formatted result
     const formattedResult = {
-      text: formattedText,
+      text: formattedText || '',  // Ensure text is never undefined
       language: 'en-US',
       timestamps: options.includeTimestamps,
       style: style,
       segments: result.result || [],
       model: options.model || 'vosk'
     };
+
+    // CRITICAL FIX: If text is still empty but we have segments, force construction from segments
+    if ((!formattedResult.text || formattedResult.text.trim() === '') && formattedResult.segments && formattedResult.segments.length > 0) {
+      console.log('CRITICAL: Text is still empty but segments exist. Forcing text construction from segments.');
+      // Sort segments by start time
+      const sortedSegments = [...formattedResult.segments].sort((a, b) => a.start - b.start);
+      // Join words from segments
+      formattedResult.text = sortedSegments.map(segment => segment.word).join(' ');
+      console.log(`Forced text construction from ${sortedSegments.length} segments: "${formattedResult.text}"`);
+
+      // Apply style to the constructed text
+      if (style === 'clean') {
+        formattedResult.text = cleanTranscription(formattedResult.text);
+      } else if (style === 'condensed') {
+        formattedResult.text = condensedTranscription(formattedResult.text);
+      }
+    }
+
+    // Log the formatted result for debugging
+    console.log('Formatted transcription result:', JSON.stringify(formattedResult, null, 2));
 
     // Add confidence score if available
     if (result.result && result.result.length > 0) {
@@ -481,13 +545,19 @@ const fallbackTranscription = (options = {}) => {
     });
   }
 
-  return {
+  // Create the result object
+  const result = {
     text: transcriptionText,
     language: 'en-US',
     timestamps: options.includeTimestamps,
     style: style,
     segments: segments
   };
+
+  // Log the fallback result for debugging
+  console.log('Using fallback transcription result:', JSON.stringify(result, null, 2));
+
+  return result;
 };
 
 /**
@@ -503,21 +573,40 @@ export const extractAudioFromVideo = (videoPath) => {
         return;
       }
 
+      // Check if the video file is valid
+      const stats = fs.statSync(videoPath);
+      if (stats.size === 0) {
+        reject(new Error(`Video file is empty: ${videoPath}`));
+        return;
+      }
+
       console.log(`Extracting audio from video: ${videoPath}`);
+      console.log(`Video file size: ${stats.size} bytes`);
 
       const audioFilename = path.basename(videoPath, path.extname(videoPath)) + '.wav';
       const audioPath = path.join(tempDir, audioFilename);
 
-      // Use ffmpeg to extract audio
+      // Use ffmpeg with more explicit options to ensure proper extraction
       const ffmpegProcess = spawn('ffmpeg', [
-        '-i', videoPath,
-        '-ar', '16000',
-        '-ac', '1',
-        '-f', 'wav',
-        audioPath
+        '-y',                   // Overwrite output files without asking
+        '-i', videoPath,        // Input file
+        '-vn',                  // Disable video
+        '-acodec', 'pcm_s16le', // Audio codec (PCM 16-bit little-endian)
+        '-ar', '16000',         // Audio sample rate (16kHz)
+        '-ac', '1',             // Audio channels (mono)
+        '-f', 'wav',            // Output format
+        '-loglevel', 'info',    // Log level
+        audioPath               // Output file
       ]);
 
       let ffmpegError = '';
+      let ffmpegOutput = '';
+
+      ffmpegProcess.stdout.on('data', (data) => {
+        const output = data.toString();
+        console.log(`FFmpeg stdout: ${output}`);
+        ffmpegOutput += output;
+      });
 
       ffmpegProcess.stderr.on('data', (data) => {
         const output = data.toString();
@@ -527,8 +616,21 @@ export const extractAudioFromVideo = (videoPath) => {
 
       ffmpegProcess.on('close', (code) => {
         if (code === 0) {
-          console.log(`Audio extracted successfully to: ${audioPath}`);
-          resolve(audioPath);
+          // Verify the output file exists and is not empty
+          if (fs.existsSync(audioPath)) {
+            const audioStats = fs.statSync(audioPath);
+            if (audioStats.size > 0) {
+              console.log(`Audio extracted successfully to: ${audioPath}`);
+              console.log(`Audio file size: ${audioStats.size} bytes`);
+              resolve(audioPath);
+            } else {
+              console.error('Extracted audio file is empty');
+              reject(new Error('Extracted audio file is empty'));
+            }
+          } else {
+            console.error('Audio file was not created');
+            reject(new Error('Audio file was not created'));
+          }
         } else {
           console.error(`FFmpeg process exited with code ${code}`);
           console.error(`FFmpeg error: ${ffmpegError}`);

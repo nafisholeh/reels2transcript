@@ -73,18 +73,39 @@ app.post('/api/extract/single', async (req, res) => {
 
     // Clean up temporary files
     cleanupTempFiles(extractedData.videoPath);
+    // Temporarily disabled to keep WAV file for inspection
     cleanupVoskFiles(audioPath);
+
+    // Ensure transcription text is not undefined
+    if (!transcription.text || transcription.text.trim() === '') {
+      console.warn('Transcription text is empty or undefined');
+
+      // If we have segments, construct text from them
+      if (transcription.segments && transcription.segments.length > 0) {
+        console.log('CRITICAL FIX in server/index.js: Constructing text from segments');
+        // Sort segments by start time
+        const sortedSegments = [...transcription.segments].sort((a, b) => a.start - b.start);
+        // Join words from segments
+        transcription.text = sortedSegments.map(segment => segment.word).join(' ');
+        console.log(`Constructed text from ${sortedSegments.length} segments: "${transcription.text}"`);
+      } else {
+        transcription.text = '';
+      }
+    }
+
+    // Prepare response data
+    const responseData = {
+      url: extractedData.url,
+      transcription: transcription.text,
+      caption: extractedData.caption || '',
+      timestamp: extractedData.timestamp,
+      formattedOutput: formattedOutput
+    };
 
     // Return response
     res.status(200).json({
       success: true,
-      data: {
-        url: extractedData.url,
-        transcription: transcription.text,
-        caption: extractedData.caption,
-        timestamp: extractedData.timestamp,
-        formattedOutput: formattedOutput
-      }
+      data: responseData
     });
   } catch (error) {
     console.error('Error processing Instagram Reel:', error);
@@ -142,18 +163,37 @@ app.post('/api/extract/bulk', async (req, res) => {
           timestamp: extractedData.timestamp
         }, options?.format || 'plain');
 
+        // Ensure transcription text is not undefined
+        if (!transcription.text || transcription.text.trim() === '') {
+          console.warn('Transcription text is empty or undefined');
+
+          // If we have segments, construct text from them
+          if (transcription.segments && transcription.segments.length > 0) {
+            console.log('CRITICAL FIX in server/index.js (bulk): Constructing text from segments');
+            // Sort segments by start time
+            const sortedSegments = [...transcription.segments].sort((a, b) => a.start - b.start);
+            // Join words from segments
+            transcription.text = sortedSegments.map(segment => segment.word).join(' ');
+            console.log(`Constructed text from ${sortedSegments.length} segments: "${transcription.text}"`);
+          } else {
+            transcription.text = '';
+          }
+        }
+
         // Add to results
         results.push({
           url: extractedData.url,
           transcription: transcription.text,
-          caption: extractedData.caption,
+          caption: extractedData.caption || '',
           timestamp: extractedData.timestamp,
           formattedOutput: formattedOutput
         });
 
         // Clean up temporary files
         cleanupTempFiles(extractedData.videoPath);
-        cleanupVoskFiles(audioPath);
+        // Temporarily disabled to keep WAV file for inspection
+        // cleanupVoskFiles(audioPath);
+        console.log(`WAV file for inspection: ${audioPath}`);
       } catch (error) {
         // If one URL fails, continue with the others
         console.error(`Error processing URL ${url}:`, error);
