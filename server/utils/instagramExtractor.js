@@ -14,8 +14,9 @@ const execPromise = promisify(exec);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Path to the Python script for caption extraction
+// Path to the Python scripts
 const CAPTION_EXTRACTOR_SCRIPT = path.join(__dirname, 'insta_caption_extractor.py');
+const MEDIA_DOWNLOADER_SCRIPT = path.join(__dirname, 'insta_media_downloader.py');
 
 // Create temp directory if it doesn't exist
 const tempDir = path.join(__dirname, '../../temp');
@@ -50,36 +51,54 @@ export const extractInstagramReelData = async (url) => {
     const videoUrl = instagramData.url_list[0];
     console.log(`Found video URL: ${videoUrl}`);
 
-    // Extract username from post_info if available
+    // Try to download media using Instaloader first
+    console.log('Attempting to download media using Instaloader...');
+    const instaloaderResult = await downloadMediaWithInstaloader(url);
+
+    let videoPath = '';
+    let caption = '';
     let username = 'unknown';
 
-    if (instagramData.post_info) {
-      username = instagramData.post_info.owner_username || 'unknown';
-      console.log('Post info available:', JSON.stringify(instagramData.post_info, null, 2));
-    }
+    if (instaloaderResult.videoPath && fs.existsSync(instaloaderResult.videoPath)) {
+      // Instaloader download successful
+      videoPath = instaloaderResult.videoPath;
+      caption = instaloaderResult.caption;
+      username = instaloaderResult.username || 'unknown';
 
-    // Extract caption using Instaloader
-    console.log('Attempting to extract caption using Instaloader...');
-    let caption = await extractCaptionWithInstaloader(url);
+      console.log(`Successfully downloaded media with Instaloader to: ${videoPath}`);
+    } else {
+      // Fallback to legacy method if Instaloader fails
+      console.warn('Instaloader download failed, falling back to legacy method...');
 
-    // If caption extraction failed, set a default message
-    if (!caption || caption === 'Failed to extract caption') {
-      console.warn('Caption extraction failed, using default message');
-      caption = 'No caption available';
-    }
+      // Extract username from post_info if available
+      if (instagramData.post_info) {
+        username = instagramData.post_info.owner_username || 'unknown';
+        console.log('Post info available:', JSON.stringify(instagramData.post_info, null, 2));
+      }
 
-    // Download the video
-    const videoPath = await downloadVideo(videoUrl, url);
+      // Download the video using the legacy method
+      videoPath = await downloadVideoLegacy(videoUrl, url);
 
-    if (!videoPath || !fs.existsSync(videoPath)) {
-      throw new Error('Failed to download video from Instagram Reel');
+      if (!videoPath || !fs.existsSync(videoPath)) {
+        throw new Error('Failed to download video from Instagram Reel using both methods');
+      }
+
+      // Extract caption using Instaloader
+      console.log('Attempting to extract caption using Instaloader...');
+      caption = await extractCaptionWithInstaloader(url);
+
+      // If caption extraction failed, set a default message
+      if (!caption || caption === 'Failed to extract caption') {
+        console.warn('Caption extraction failed, using default message');
+        caption = 'No caption available';
+      }
     }
 
     console.log(`Video downloaded to: ${videoPath}`);
 
     return {
       url,
-      videoUrl,
+      videoUrl: videoPath.startsWith('http') ? videoPath : `file://${videoPath}`,
       videoPath,
       caption,
       username,
@@ -156,12 +175,50 @@ const fallbackToSampleVideo = (url) => {
 };
 
 /**
- * Download video from URL
+ * Download media from Instagram using Instaloader
+ * @param {string} url - Instagram post URL
+ * @returns {Promise<Object>} - Object containing media path and caption
+ */
+const downloadMediaWithInstaloader = async (url) => {
+  try {
+    console.log(`Downloading media with Instaloader from: ${url}`);
+
+    // Run the Python script to download the media
+    const { stdout, stderr } = await execPromise(`python3 "${MEDIA_DOWNLOADER_SCRIPT}" "${url}" "${tempDir}"`);
+
+    if (stderr) {
+      console.error(`Error from Instaloader media downloader: ${stderr}`);
+    }
+
+    // Parse the JSON output from the Python script
+    const result = JSON.parse(stdout);
+
+    if (!result.success) {
+      console.error(`Failed to download media: ${result.error}`);
+      return { videoPath: '', caption: 'Failed to download media' };
+    }
+
+    console.log(`Successfully downloaded media to: ${result.media_path}`);
+    console.log(`Caption: "${result.caption.substring(0, 50)}..."`);
+
+    return {
+      videoPath: result.media_path,
+      caption: result.caption,
+      username: result.username
+    };
+  } catch (error) {
+    console.error('Error downloading media with Instaloader:', error);
+    return { videoPath: '', caption: 'Failed to download media' };
+  }
+};
+
+/**
+ * Download video from URL (Legacy method - kept for fallback)
  * @param {string} videoUrl - Video URL
  * @param {string} originalUrl - Original Instagram URL
  * @returns {Promise<string>} - Path to downloaded video
  */
-const downloadVideo = async (videoUrl, originalUrl) => {
+const downloadVideoLegacy = async (videoUrl, originalUrl) => {
   try {
     // Generate a unique filename based on the URL
     const urlHash = Buffer.from(originalUrl).toString('base64').replace(/[/+=]/g, '');

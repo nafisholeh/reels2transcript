@@ -15,8 +15,11 @@ A web application that allows users to extract speech transcriptions and caption
 
 - Frontend: React.js with Material-UI
 - Backend: Node.js with Express
-- API Integration: Instagram data extraction
+- Instagram Integration:
+  - Instaloader (Python) for downloading videos and extracting captions
+  - instagram-url-direct (Node.js) as fallback for video extraction
 - Speech Recognition: Vosk (offline speech recognition)
+- Audio Processing: FFmpeg
 
 ## Features
 
