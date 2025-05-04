@@ -43,12 +43,15 @@ export const extractInstagramReelData = async (url) => {
     console.log(`Found video URL: ${videoUrl}`);
 
     // Extract caption and username from post_info if available
-    let caption = 'No caption available';
+    let caption = 'Caption extraction not implemented - the instagram-url-direct package does not provide caption data';
     let username = 'unknown';
 
     if (instagramData.post_info) {
       username = instagramData.post_info.owner_username || 'unknown';
-      // Caption is not directly available in the API response
+      console.log('Post info available:', JSON.stringify(instagramData.post_info, null, 2));
+
+      // Note: The instagram-url-direct package doesn't provide caption data
+      // We would need to use a different approach to extract captions
     }
 
     // Download the video
