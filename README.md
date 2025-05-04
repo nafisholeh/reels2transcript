@@ -48,23 +48,65 @@ A web application that allows users to extract speech transcriptions and caption
    npm install
    ```
 
-3. Set up Vosk for speech recognition
+3. Install Python dependencies for Vosk
    ```
-   npm run setup:vosk
+   pip install vosk
    ```
 
-   This will:
-   - Install the required Python packages (vosk, pyaudio)
-   - Download and extract the small Vosk English model
+4. Set up Vosk speech recognition models
 
-   For better accuracy, you can install the larger model (1.8GB):
+   Create a models directory in the project root:
    ```
-   npm run setup:vosk-large
+   mkdir -p models
+   ```
+
+   Download and extract the Vosk models:
+
+   **Option 1: Small model (42MB)** - Faster but less accurate
+   ```
+   # Download the small model
+   curl -L -o models/vosk-model-small-en-us-0.15.zip https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip
+
+   # Extract the model
+   unzip models/vosk-model-small-en-us-0.15.zip -d models/
+
+   # Rename the folder for easier reference
+   mv models/vosk-model-small-en-us-0.15 models/vosk-model-en-us-small
+   ```
+
+   **Option 2: Large model (1.8GB)** - More accurate but requires more resources
+   ```
+   # Download the large model
+   curl -L -o models/vosk-model-en-us-0.22.zip https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip
+
+   # Extract the model
+   unzip models/vosk-model-en-us-0.22.zip -d models/
+
+   # Rename the folder for easier reference
+   mv models/vosk-model-en-us-0.22 models/vosk-model-en-us-large
    ```
 
    The application will automatically use the large model if available, and fall back to the small model if not.
 
-4. Start the development server
+   **Note:** After setup, your models directory should have the following structure:
+   ```
+   models/
+   ├── vosk-model-en-us-large/    # Large model (optional but recommended)
+   │   ├── am/
+   │   ├── conf/
+   │   ├── graph/
+   │   ├── ivector/
+   │   └── ...
+   ├── vosk-model-en-us-small/    # Small model (minimum requirement)
+   │   ├── am/
+   │   ├── conf/
+   │   ├── graph/
+   │   ├── ivector/
+   │   └── ...
+   └── vosk-model-small-en-us-0.15.zip  # Downloaded zip file (can be deleted after extraction)
+   ```
+
+5. Start the development server
    ```
    npm run dev:all
    ```
@@ -75,6 +117,35 @@ A web application that allows users to extract speech transcriptions and caption
 2. Select your preferred output format and transcription style
 3. Click "Extract" to process the Reel
 4. View and download the transcription
+
+## Troubleshooting
+
+### Common Issues
+
+#### Empty Transcription Results
+
+If you're getting empty transcription results even though the audio extraction seems to work:
+
+1. Check that the Vosk models are correctly installed in the `models/` directory
+2. Verify the audio file is valid by playing it: `node server/utils/playAudio.js path/to/audio.wav`
+3. Check the audio file information: `node server/utils/getAudioInfo.js path/to/audio.wav`
+4. Try running the transcription directly: `python3 server/utils/vosk_transcribe.py path/to/audio.wav`
+
+#### Model Not Found Error
+
+If you see "Model not found" errors:
+
+1. Make sure you've downloaded and extracted the models as described in the setup instructions
+2. Verify the model directory names match exactly: `vosk-model-en-us-small` and `vosk-model-en-us-large`
+3. Check that the models are in the correct location (in the `models/` directory at the project root)
+
+#### Audio Extraction Issues
+
+If audio extraction fails:
+
+1. Make sure FFmpeg is installed on your system
+2. Check that the Instagram Reel URL is valid and accessible
+3. Try downloading the video manually and then extracting the audio
 
 ## License
 
