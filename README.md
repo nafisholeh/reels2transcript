@@ -1,18 +1,15 @@
 # Instagram Reels Transcription Extractor
 
-A web application that allows users to extract speech transcriptions from Instagram Reels by simply providing the URL. The application supports both single and bulk extraction, with options to customize the output format of transcriptions.
+A web application that allows users to extract speech transcriptions and captions from Instagram Reels by simply providing the URL. The application supports both single and bulk extraction, with options to customize the output format of transcriptions.
 
 ## Features
 
 - Extract speech transcription from Instagram Reels
+- Extract captions from Instagram Reels using Instaloader
 - Support for bulk URL processing
 - Multiple output formats (Plain text, JSON, CSV, SRT)
 - Customizable transcription styles
 - Download transcriptions in selected format
-
-## Limitations
-
-- **Caption extraction**: Currently, the application does not extract captions from Instagram posts. The instagram-url-direct package used for video extraction does not provide caption data. This feature may be implemented in a future update.
 
 ## Tech Stack
 
@@ -51,9 +48,9 @@ A web application that allows users to extract speech transcriptions from Instag
    npm install
    ```
 
-3. Install Python dependencies for Vosk
+3. Install Python dependencies for Vosk and Instaloader
    ```
-   pip install vosk
+   pip install vosk instaloader
    ```
 
 4. Set up Vosk speech recognition models

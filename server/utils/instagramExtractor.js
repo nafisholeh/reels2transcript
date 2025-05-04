@@ -4,10 +4,18 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { instagramGetUrl } from 'instagram-url-direct';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+// Promisify exec for async/await usage
+const execPromise = promisify(exec);
 
 // Get current file path (ES modules)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+// Path to the Python script for caption extraction
+const CAPTION_EXTRACTOR_SCRIPT = path.join(__dirname, 'insta_caption_extractor.py');
 
 // Create temp directory if it doesn't exist
 const tempDir = path.join(__dirname, '../../temp');
@@ -42,16 +50,22 @@ export const extractInstagramReelData = async (url) => {
     const videoUrl = instagramData.url_list[0];
     console.log(`Found video URL: ${videoUrl}`);
 
-    // Extract caption and username from post_info if available
-    let caption = 'Caption extraction not implemented - the instagram-url-direct package does not provide caption data';
+    // Extract username from post_info if available
     let username = 'unknown';
 
     if (instagramData.post_info) {
       username = instagramData.post_info.owner_username || 'unknown';
       console.log('Post info available:', JSON.stringify(instagramData.post_info, null, 2));
+    }
 
-      // Note: The instagram-url-direct package doesn't provide caption data
-      // We would need to use a different approach to extract captions
+    // Extract caption using Instaloader
+    console.log('Attempting to extract caption using Instaloader...');
+    let caption = await extractCaptionWithInstaloader(url);
+
+    // If caption extraction failed, set a default message
+    if (!caption || caption === 'Failed to extract caption') {
+      console.warn('Caption extraction failed, using default message');
+      caption = 'No caption available';
     }
 
     // Download the video
@@ -201,6 +215,38 @@ const downloadVideo = async (videoUrl, originalUrl) => {
     console.error('Error downloading video:', error);
     console.error(error.stack);
     return '';
+  }
+};
+
+/**
+ * Extract caption from Instagram post using Instaloader
+ * @param {string} url - Instagram post URL
+ * @returns {Promise<string>} - Extracted caption
+ */
+const extractCaptionWithInstaloader = async (url) => {
+  try {
+    console.log(`Extracting caption with Instaloader from: ${url}`);
+
+    // Run the Python script to extract the caption
+    const { stdout, stderr } = await execPromise(`python3 "${CAPTION_EXTRACTOR_SCRIPT}" "${url}"`);
+
+    if (stderr) {
+      console.error(`Error from Instaloader script: ${stderr}`);
+    }
+
+    // Parse the JSON output from the Python script
+    const result = JSON.parse(stdout);
+
+    if (!result.success) {
+      console.error(`Failed to extract caption: ${result.error}`);
+      return 'Failed to extract caption';
+    }
+
+    console.log(`Successfully extracted caption: "${result.caption.substring(0, 50)}..."`);
+    return result.caption;
+  } catch (error) {
+    console.error('Error extracting caption with Instaloader:', error);
+    return 'Failed to extract caption';
   }
 };
 
