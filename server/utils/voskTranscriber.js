@@ -561,11 +561,56 @@ const fallbackTranscription = (options = {}) => {
 };
 
 /**
- * Extract audio from video file
+ * Extract audio from video file with multiple fallback methods
  * @param {string} videoPath - Path to video file
  * @returns {Promise<string>} - Path to extracted audio file
  */
-export const extractAudioFromVideo = (videoPath) => {
+export const extractAudioFromVideo = async (videoPath) => {
+  // Maximum number of retries
+  const MAX_RETRIES = 3;
+  // Different extraction methods to try
+  const extractionMethods = [
+    extractAudioMethod1,
+    extractAudioMethod2,
+    extractAudioMethod3
+  ];
+
+  let lastError = null;
+
+  // Try each method in sequence
+  for (let i = 0; i < extractionMethods.length; i++) {
+    const extractMethod = extractionMethods[i];
+    console.log(`Trying audio extraction method ${i + 1}/${extractionMethods.length}...`);
+
+    try {
+      const audioPath = await extractMethod(videoPath);
+      if (audioPath && fs.existsSync(audioPath)) {
+        const stats = fs.statSync(audioPath);
+        if (stats.size > 0) {
+          console.log(`Audio extraction successful with method ${i + 1}`);
+          console.log(`Audio file size: ${stats.size} bytes`);
+          return audioPath;
+        } else {
+          console.warn(`Method ${i + 1} produced an empty audio file, trying next method...`);
+        }
+      }
+    } catch (error) {
+      console.error(`Method ${i + 1} failed:`, error.message);
+      lastError = error;
+      // Continue to the next method
+    }
+  }
+
+  // If all methods failed, throw the last error
+  throw lastError || new Error('All audio extraction methods failed');
+};
+
+/**
+ * First method: Standard FFmpeg extraction
+ * @param {string} videoPath - Path to video file
+ * @returns {Promise<string>} - Path to extracted audio file
+ */
+const extractAudioMethod1 = (videoPath) => {
   return new Promise((resolve, reject) => {
     try {
       if (!videoPath || !fs.existsSync(videoPath)) {
@@ -580,13 +625,13 @@ export const extractAudioFromVideo = (videoPath) => {
         return;
       }
 
-      console.log(`Extracting audio from video: ${videoPath}`);
+      console.log(`Method 1: Extracting audio from video: ${videoPath}`);
       console.log(`Video file size: ${stats.size} bytes`);
 
       const audioFilename = path.basename(videoPath, path.extname(videoPath)) + '.wav';
       const audioPath = path.join(tempDir, audioFilename);
 
-      // Use ffmpeg with more explicit options to ensure proper extraction
+      // Standard FFmpeg command
       const ffmpegProcess = spawn('ffmpeg', [
         '-y',                   // Overwrite output files without asking
         '-i', videoPath,        // Input file
@@ -595,22 +640,13 @@ export const extractAudioFromVideo = (videoPath) => {
         '-ar', '16000',         // Audio sample rate (16kHz)
         '-ac', '1',             // Audio channels (mono)
         '-f', 'wav',            // Output format
-        '-loglevel', 'info',    // Log level
         audioPath               // Output file
       ]);
 
       let ffmpegError = '';
-      let ffmpegOutput = '';
-
-      ffmpegProcess.stdout.on('data', (data) => {
-        const output = data.toString();
-        console.log(`FFmpeg stdout: ${output}`);
-        ffmpegOutput += output;
-      });
 
       ffmpegProcess.stderr.on('data', (data) => {
         const output = data.toString();
-        console.log(`FFmpeg: ${output}`);
         ffmpegError += output;
       });
 
@@ -620,31 +656,175 @@ export const extractAudioFromVideo = (videoPath) => {
           if (fs.existsSync(audioPath)) {
             const audioStats = fs.statSync(audioPath);
             if (audioStats.size > 0) {
-              console.log(`Audio extracted successfully to: ${audioPath}`);
-              console.log(`Audio file size: ${audioStats.size} bytes`);
+              console.log(`Method 1: Audio extracted successfully to: ${audioPath}`);
               resolve(audioPath);
             } else {
-              console.error('Extracted audio file is empty');
-              reject(new Error('Extracted audio file is empty'));
+              reject(new Error('Method 1: Extracted audio file is empty'));
             }
           } else {
-            console.error('Audio file was not created');
-            reject(new Error('Audio file was not created'));
+            reject(new Error('Method 1: Audio file was not created'));
           }
         } else {
-          console.error(`FFmpeg process exited with code ${code}`);
-          console.error(`FFmpeg error: ${ffmpegError}`);
-          reject(new Error(`FFmpeg process exited with code ${code}`));
+          console.error(`Method 1: FFmpeg process exited with code ${code}`);
+          reject(new Error(`Method 1: FFmpeg process exited with code ${code}`));
         }
       });
 
       ffmpegProcess.on('error', (err) => {
-        console.error('Failed to start FFmpeg process:', err);
-        reject(err);
+        reject(new Error(`Method 1: Failed to start FFmpeg process: ${err.message}`));
       });
     } catch (error) {
-      console.error('Error in extractAudioFromVideo:', error);
-      reject(error);
+      reject(new Error(`Method 1: Error in extraction: ${error.message}`));
+    }
+  });
+};
+
+/**
+ * Second method: FFmpeg with alternative options
+ * @param {string} videoPath - Path to video file
+ * @returns {Promise<string>} - Path to extracted audio file
+ */
+const extractAudioMethod2 = (videoPath) => {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`Method 2: Extracting audio with alternative options from: ${videoPath}`);
+
+      const audioFilename = path.basename(videoPath, path.extname(videoPath)) + '_alt.wav';
+      const audioPath = path.join(tempDir, audioFilename);
+
+      // Alternative FFmpeg command with different options
+      const ffmpegProcess = spawn('ffmpeg', [
+        '-y',                   // Overwrite output files without asking
+        '-i', videoPath,        // Input file
+        '-vn',                  // Disable video
+        '-acodec', 'pcm_s16le', // Audio codec (PCM 16-bit little-endian)
+        '-ar', '16000',         // Audio sample rate (16kHz)
+        '-ac', '1',             // Audio channels (mono)
+        '-af', 'aresample=async=1', // Add audio resampling with async mode
+        '-f', 'wav',            // Output format
+        audioPath               // Output file
+      ]);
+
+      let ffmpegError = '';
+
+      ffmpegProcess.stderr.on('data', (data) => {
+        const output = data.toString();
+        ffmpegError += output;
+      });
+
+      ffmpegProcess.on('close', (code) => {
+        if (code === 0) {
+          if (fs.existsSync(audioPath) && fs.statSync(audioPath).size > 0) {
+            console.log(`Method 2: Audio extracted successfully to: ${audioPath}`);
+            resolve(audioPath);
+          } else {
+            reject(new Error('Method 2: Extracted audio file is empty or not created'));
+          }
+        } else {
+          console.error(`Method 2: FFmpeg process exited with code ${code}`);
+          reject(new Error(`Method 2: FFmpeg process exited with code ${code}`));
+        }
+      });
+
+      ffmpegProcess.on('error', (err) => {
+        reject(new Error(`Method 2: Failed to start FFmpeg process: ${err.message}`));
+      });
+    } catch (error) {
+      reject(new Error(`Method 2: Error in extraction: ${error.message}`));
+    }
+  });
+};
+
+/**
+ * Third method: FFmpeg with copy codec
+ * @param {string} videoPath - Path to video file
+ * @returns {Promise<string>} - Path to extracted audio file
+ */
+const extractAudioMethod3 = (videoPath) => {
+  return new Promise((resolve, reject) => {
+    try {
+      console.log(`Method 3: Extracting audio with copy codec from: ${videoPath}`);
+
+      // First extract with copy codec to preserve original audio
+      const tempAudioFilename = path.basename(videoPath, path.extname(videoPath)) + '_temp.aac';
+      const tempAudioPath = path.join(tempDir, tempAudioFilename);
+
+      // Final WAV file path
+      const audioFilename = path.basename(videoPath, path.extname(videoPath)) + '_copy.wav';
+      const audioPath = path.join(tempDir, audioFilename);
+
+      // Two-step process: first extract audio with copy codec
+      const ffmpegProcess1 = spawn('ffmpeg', [
+        '-y',                   // Overwrite output files without asking
+        '-i', videoPath,        // Input file
+        '-vn',                  // Disable video
+        '-acodec', 'copy',      // Copy audio codec (no re-encoding)
+        tempAudioPath           // Temporary output file
+      ]);
+
+      let ffmpegError1 = '';
+
+      ffmpegProcess1.stderr.on('data', (data) => {
+        ffmpegError1 += data.toString();
+      });
+
+      ffmpegProcess1.on('close', (code) => {
+        if (code === 0 && fs.existsSync(tempAudioPath) && fs.statSync(tempAudioPath).size > 0) {
+          console.log(`Method 3: Temporary audio extracted to: ${tempAudioPath}`);
+
+          // Second step: convert to WAV with required parameters
+          const ffmpegProcess2 = spawn('ffmpeg', [
+            '-y',                   // Overwrite output files without asking
+            '-i', tempAudioPath,    // Input file (the temporary audio)
+            '-acodec', 'pcm_s16le', // Audio codec (PCM 16-bit little-endian)
+            '-ar', '16000',         // Audio sample rate (16kHz)
+            '-ac', '1',             // Audio channels (mono)
+            audioPath               // Final output file
+          ]);
+
+          let ffmpegError2 = '';
+
+          ffmpegProcess2.stderr.on('data', (data) => {
+            ffmpegError2 += data.toString();
+          });
+
+          ffmpegProcess2.on('close', (code2) => {
+            // Clean up temporary file
+            try {
+              if (fs.existsSync(tempAudioPath)) {
+                fs.unlinkSync(tempAudioPath);
+              }
+            } catch (e) {
+              console.warn(`Could not delete temporary file: ${tempAudioPath}`, e);
+            }
+
+            if (code2 === 0) {
+              if (fs.existsSync(audioPath) && fs.statSync(audioPath).size > 0) {
+                console.log(`Method 3: Audio converted successfully to: ${audioPath}`);
+                resolve(audioPath);
+              } else {
+                reject(new Error('Method 3: Converted audio file is empty or not created'));
+              }
+            } else {
+              console.error(`Method 3: Second FFmpeg process exited with code ${code2}`);
+              reject(new Error(`Method 3: Second FFmpeg process exited with code ${code2}`));
+            }
+          });
+
+          ffmpegProcess2.on('error', (err) => {
+            reject(new Error(`Method 3: Failed to start second FFmpeg process: ${err.message}`));
+          });
+        } else {
+          console.error(`Method 3: First FFmpeg process exited with code ${code}`);
+          reject(new Error(`Method 3: First FFmpeg process exited with code ${code}`));
+        }
+      });
+
+      ffmpegProcess1.on('error', (err) => {
+        reject(new Error(`Method 3: Failed to start first FFmpeg process: ${err.message}`));
+      });
+    } catch (error) {
+      reject(new Error(`Method 3: Error in extraction: ${error.message}`));
     }
   });
 };

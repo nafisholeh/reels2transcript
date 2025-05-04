@@ -9,7 +9,7 @@ import path from 'path';
 
 // Import utilities
 import { extractInstagramReelData, cleanupTempFiles } from './utils/instagramExtractor.js';
-import { transcribeAudioWithVosk, extractAudioFromVideo, cleanupTempFiles as cleanupVoskFiles } from './utils/voskTranscriber.js';
+import { transcribeAudioWithVosk, extractAudioFromVideo } from './utils/voskTranscriber.js';
 import { formatOutput } from './utils/formatOutput.js';
 
 // Get current file path (ES modules)
@@ -39,6 +39,13 @@ app.get('/api/health', (req, res) => {
 });
 
 // API route for processing a single Instagram Reel URL
+app.post('/api/extract', async (req, res) => {
+  // Forward to the single extraction endpoint
+  req.url = '/api/extract/single';
+  app._router.handle(req, res);
+});
+
+// API route for processing a single Instagram Reel URL (detailed implementation)
 app.post('/api/extract/single', async (req, res) => {
   const { url, options } = req.body;
 
@@ -51,19 +58,57 @@ app.post('/api/extract/single', async (req, res) => {
   }
 
   try {
-    // Extract data from Instagram Reel
-    const extractedData = await extractInstagramReelData(url);
+    console.log(`\n========== Processing URL: ${url} ==========`);
 
-    // Extract audio from video
-    const audioPath = await extractAudioFromVideo(extractedData.videoPath);
+    // Extract data from Instagram Reel
+    console.log(`Step 1: Extracting data from Instagram Reel...`);
+    const extractedData = await extractInstagramReelData(url);
+    console.log(`Instagram data extracted successfully`);
+
+    // Validate video path
+    if (!extractedData.videoPath || !fs.existsSync(extractedData.videoPath)) {
+      throw new Error('Invalid video path or video file not found');
+    }
+
+    // Check video file size
+    const videoStats = fs.statSync(extractedData.videoPath);
+    console.log(`Video file size: ${videoStats.size} bytes`);
+    if (videoStats.size === 0) {
+      throw new Error('Video file is empty');
+    }
+
+    // Extract audio from video with enhanced error handling
+    console.log(`Step 2: Extracting audio from video...`);
+    let audioPath;
+    try {
+      audioPath = await extractAudioFromVideo(extractedData.videoPath);
+      console.log(`Audio extracted successfully to: ${audioPath}`);
+    } catch (audioError) {
+      console.error(`Audio extraction failed:`, audioError);
+      throw new Error(`Failed to extract audio: ${audioError.message}`);
+    }
+
+    // Validate audio file
+    if (!audioPath || !fs.existsSync(audioPath)) {
+      throw new Error('Audio file not found after extraction');
+    }
+
+    const audioStats = fs.statSync(audioPath);
+    console.log(`Audio file size: ${audioStats.size} bytes`);
+    if (audioStats.size === 0) {
+      throw new Error('Extracted audio file is empty');
+    }
 
     // Transcribe audio using Vosk
+    console.log(`Step 3: Transcribing audio using Vosk...`);
     const transcription = await transcribeAudioWithVosk(audioPath, {
       style: options?.style || 'clean',
       includeTimestamps: options?.includeTimestamps || false
     });
+    console.log(`Transcription completed`);
 
     // Format output
+    console.log(`Step 4: Formatting output...`);
     const formattedOutput = formatOutput({
       url: extractedData.url,
       caption: extractedData.caption,
@@ -73,8 +118,8 @@ app.post('/api/extract/single', async (req, res) => {
 
     // Clean up temporary files
     cleanupTempFiles(extractedData.videoPath);
-    // Temporarily disabled to keep WAV file for inspection
-    cleanupVoskFiles(audioPath);
+    // Keep WAV file for inspection in case of issues
+    console.log(`WAV file for inspection: ${audioPath}`);
 
     // Ensure transcription text is not undefined
     if (!transcription.text || transcription.text.trim() === '') {
@@ -99,8 +144,11 @@ app.post('/api/extract/single', async (req, res) => {
       transcription: transcription.text,
       caption: extractedData.caption || '',
       timestamp: extractedData.timestamp,
-      formattedOutput: formattedOutput
+      formattedOutput: formattedOutput,
+      success: true
     };
+
+    console.log(`========== Finished processing URL: ${url} ==========\n`);
 
     // Return response
     res.status(200).json({
@@ -109,9 +157,26 @@ app.post('/api/extract/single', async (req, res) => {
     });
   } catch (error) {
     console.error('Error processing Instagram Reel:', error);
+
+    // Determine error type for better user feedback
+    let errorType = 'PROCESSING_ERROR';
+    let errorMessage = error.message || 'An error occurred while processing the Instagram Reel';
+
+    if (errorMessage.includes('FFmpeg process exited with code 234')) {
+      errorType = 'AUDIO_EXTRACTION_ERROR';
+      errorMessage = 'Failed to extract audio from video. The video may be corrupted or in an unsupported format.';
+    } else if (errorMessage.includes('Audio file is empty')) {
+      errorType = 'EMPTY_AUDIO_ERROR';
+      errorMessage = 'The extracted audio file is empty. The video may not contain audio.';
+    } else if (errorMessage.includes('Failed to download')) {
+      errorType = 'DOWNLOAD_ERROR';
+      errorMessage = 'Failed to download the Instagram Reel. The URL may be invalid or the content may be private.';
+    }
+
     res.status(500).json({
-      error: 'Processing Error',
-      message: error.message || 'An error occurred while processing the Instagram Reel'
+      success: false,
+      error: errorType,
+      message: errorMessage
     });
   }
 });
@@ -143,19 +208,57 @@ app.post('/api/extract/bulk', async (req, res) => {
 
     for (const url of urls) {
       try {
-        // Extract data from Instagram Reel
-        const extractedData = await extractInstagramReelData(url);
+        console.log(`\n========== Processing URL: ${url} ==========`);
 
-        // Extract audio from video
-        const audioPath = await extractAudioFromVideo(extractedData.videoPath);
+        // Extract data from Instagram Reel
+        console.log(`Step 1: Extracting data from Instagram Reel...`);
+        const extractedData = await extractInstagramReelData(url);
+        console.log(`Instagram data extracted successfully`);
+
+        // Validate video path
+        if (!extractedData.videoPath || !fs.existsSync(extractedData.videoPath)) {
+          throw new Error('Invalid video path or video file not found');
+        }
+
+        // Check video file size
+        const videoStats = fs.statSync(extractedData.videoPath);
+        console.log(`Video file size: ${videoStats.size} bytes`);
+        if (videoStats.size === 0) {
+          throw new Error('Video file is empty');
+        }
+
+        // Extract audio from video with enhanced error handling
+        console.log(`Step 2: Extracting audio from video...`);
+        let audioPath;
+        try {
+          audioPath = await extractAudioFromVideo(extractedData.videoPath);
+          console.log(`Audio extracted successfully to: ${audioPath}`);
+        } catch (audioError) {
+          console.error(`Audio extraction failed:`, audioError);
+          throw new Error(`Failed to extract audio: ${audioError.message}`);
+        }
+
+        // Validate audio file
+        if (!audioPath || !fs.existsSync(audioPath)) {
+          throw new Error('Audio file not found after extraction');
+        }
+
+        const audioStats = fs.statSync(audioPath);
+        console.log(`Audio file size: ${audioStats.size} bytes`);
+        if (audioStats.size === 0) {
+          throw new Error('Extracted audio file is empty');
+        }
 
         // Transcribe audio using Vosk
+        console.log(`Step 3: Transcribing audio using Vosk...`);
         const transcription = await transcribeAudioWithVosk(audioPath, {
           style: options?.style || 'clean',
           includeTimestamps: options?.includeTimestamps || false
         });
+        console.log(`Transcription completed`);
 
         // Format output
+        console.log(`Step 4: Formatting output...`);
         const formattedOutput = formatOutput({
           url: extractedData.url,
           caption: extractedData.caption,
@@ -186,21 +289,40 @@ app.post('/api/extract/bulk', async (req, res) => {
           transcription: transcription.text,
           caption: extractedData.caption || '',
           timestamp: extractedData.timestamp,
-          formattedOutput: formattedOutput
+          formattedOutput: formattedOutput,
+          success: true
         });
 
         // Clean up temporary files
         cleanupTempFiles(extractedData.videoPath);
-        // Temporarily disabled to keep WAV file for inspection
-        // cleanupVoskFiles(audioPath);
+        // Keep WAV file for inspection in case of issues
         console.log(`WAV file for inspection: ${audioPath}`);
+        console.log(`========== Finished processing URL: ${url} ==========\n`);
       } catch (error) {
         // If one URL fails, continue with the others
         console.error(`Error processing URL ${url}:`, error);
+
+        // Determine error type for better user feedback
+        let errorType = 'PROCESSING_ERROR';
+        let errorMessage = error.message || 'An error occurred while processing this URL';
+
+        if (errorMessage.includes('FFmpeg process exited with code 234')) {
+          errorType = 'AUDIO_EXTRACTION_ERROR';
+          errorMessage = 'Failed to extract audio from video. The video may be corrupted or in an unsupported format.';
+        } else if (errorMessage.includes('Audio file is empty')) {
+          errorType = 'EMPTY_AUDIO_ERROR';
+          errorMessage = 'The extracted audio file is empty. The video may not contain audio.';
+        } else if (errorMessage.includes('Failed to download')) {
+          errorType = 'DOWNLOAD_ERROR';
+          errorMessage = 'Failed to download the Instagram Reel. The URL may be invalid or the content may be private.';
+        }
+
         results.push({
           url: url,
-          error: error.message || 'An error occurred while processing this URL',
-          timestamp: new Date().toISOString()
+          error: errorMessage,
+          errorType: errorType,
+          timestamp: new Date().toISOString(),
+          success: false
         });
       }
     }
