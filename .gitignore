@@ -37,3 +37,7 @@ models/*.zip
 # Temporary files
 temp/
 temp/*
+
+# Sample data
+sample_data/
+sample_data/*
