@@ -34,6 +34,14 @@ function TranscriptionResult({ result, format }: TranscriptionResultProps) {
   const [snackbarOpen, setSnackbarOpen] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
 
+  // Debug log the result props
+  console.log('TranscriptionResult props:', { result, format });
+
+  // Check if transcription is empty
+  if (!result.transcription) {
+    console.warn('Transcription is empty or undefined in TranscriptionResult component');
+  }
+
   // Handle tab change
   const handleTabChange = (event: React.SyntheticEvent, newValue: number) => {
     setTabValue(newValue);

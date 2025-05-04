@@ -13,11 +13,14 @@ import { ExtractOptions } from '../components/UrlInput';
 // Services
 import { extractSingleTranscription } from '../services/api';
 
+// Types
+import { TranscriptionResult as TranscriptionResultType, ApiResponse } from '../types';
+
 /**
  * Home page component with single URL extraction functionality
  */
 function Home() {
-  const [result, setResult] = useState<any | null>(null);
+  const [result, setResult] = useState<TranscriptionResultType | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [format, setFormat] = useState<string>('plain');
 
@@ -30,15 +33,38 @@ function Home() {
       // Call the API to extract transcription
       const response = await extractSingleTranscription(url, options);
 
+      // Debug log the response
+      console.log('API Response:', response);
+
       // Set the result
       if (response && response.success) {
+        console.log('Setting result data:', response.data);
+
+        // Check if transcription text exists
+        if (!response.data.transcription) {
+          console.warn('Transcription text is empty or missing');
+        }
+
         setResult(response.data);
       } else {
+        console.error('API response indicates failure:', response);
         throw new Error('Failed to extract transcription');
       }
-    } catch (err: any) {
+    } catch (err) {
       console.error('Error extracting transcription:', err);
-      setError(err.response?.data?.message || err.message || 'An error occurred');
+      let errorMessage = 'An error occurred while extracting the transcription';
+
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      }
+
+      // Handle axios error
+      const axiosError = err as { response?: { data?: { message?: string } } };
+      if (axiosError.response?.data?.message) {
+        errorMessage = axiosError.response.data.message;
+      }
+
+      setError(errorMessage);
     }
   };
 
