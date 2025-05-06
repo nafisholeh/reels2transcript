@@ -121,20 +121,44 @@ app.post('/api/extract/single', async (req, res) => {
     // Keep WAV file for inspection in case of issues
     console.log(`WAV file for inspection: ${audioPath}`);
 
+    // Check if transcription has an error
+    if (transcription.error) {
+      console.warn('Transcription failed with error:', transcription.error);
+
+      // Return error response
+      return res.status(400).json({
+        success: false,
+        error: transcription.error.code || 'TRANSCRIPTION_ERROR',
+        message: transcription.error.message || 'Failed to transcribe audio',
+        details: transcription.error.details || '',
+        url: extractedData.url,
+        caption: extractedData.caption || '',
+        timestamp: extractedData.timestamp
+      });
+    }
+
     // Ensure transcription text is not undefined
     if (!transcription.text || transcription.text.trim() === '') {
       console.warn('Transcription text is empty or undefined');
 
       // If we have segments, construct text from them
       if (transcription.segments && transcription.segments.length > 0) {
-        console.log('CRITICAL FIX in server/index.js: Constructing text from segments');
+        console.log('Constructing text from segments');
         // Sort segments by start time
         const sortedSegments = [...transcription.segments].sort((a, b) => a.start - b.start);
         // Join words from segments
         transcription.text = sortedSegments.map(segment => segment.word).join(' ');
         console.log(`Constructed text from ${sortedSegments.length} segments: "${transcription.text}"`);
       } else {
-        transcription.text = '';
+        // Return error if no text and no segments
+        return res.status(400).json({
+          success: false,
+          error: 'EMPTY_TRANSCRIPTION',
+          message: 'No speech detected in the audio',
+          url: extractedData.url,
+          caption: extractedData.caption || '',
+          timestamp: extractedData.timestamp
+        });
       }
     }
 
@@ -266,20 +290,50 @@ app.post('/api/extract/bulk', async (req, res) => {
           timestamp: extractedData.timestamp
         }, options?.format || 'plain');
 
+        // Check if transcription has an error
+        if (transcription.error) {
+          console.warn('Transcription failed with error:', transcription.error);
+
+          // Add error to results
+          results.push({
+            url: extractedData.url,
+            error: transcription.error.message || 'Failed to transcribe audio',
+            errorType: transcription.error.code || 'TRANSCRIPTION_ERROR',
+            details: transcription.error.details || '',
+            caption: extractedData.caption || '',
+            timestamp: extractedData.timestamp,
+            success: false
+          });
+
+          // Continue to next URL
+          continue;
+        }
+
         // Ensure transcription text is not undefined
         if (!transcription.text || transcription.text.trim() === '') {
           console.warn('Transcription text is empty or undefined');
 
           // If we have segments, construct text from them
           if (transcription.segments && transcription.segments.length > 0) {
-            console.log('CRITICAL FIX in server/index.js (bulk): Constructing text from segments');
+            console.log('Constructing text from segments');
             // Sort segments by start time
             const sortedSegments = [...transcription.segments].sort((a, b) => a.start - b.start);
             // Join words from segments
             transcription.text = sortedSegments.map(segment => segment.word).join(' ');
             console.log(`Constructed text from ${sortedSegments.length} segments: "${transcription.text}"`);
           } else {
-            transcription.text = '';
+            // Add error to results if no text and no segments
+            results.push({
+              url: extractedData.url,
+              error: 'No speech detected in the audio',
+              errorType: 'EMPTY_TRANSCRIPTION',
+              caption: extractedData.caption || '',
+              timestamp: extractedData.timestamp,
+              success: false
+            });
+
+            // Continue to next URL
+            continue;
           }
         }
 

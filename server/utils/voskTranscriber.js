@@ -120,11 +120,11 @@ export const transcribeAudioWithVosk = async (audioPath, options = {}) => {
     }
   }
 
-  // All retries failed, use fallback
-  console.error(`All ${MAX_RETRIES} transcription attempts failed. Using fallback.`);
+  // All retries failed, return error response
+  console.error(`All ${MAX_RETRIES} transcription attempts failed.`);
   console.error('Last error:', lastError);
 
-  return fallbackTranscription(options);
+  return transcriptionErrorResponse(options, lastError);
 };
 
 /**
@@ -262,7 +262,7 @@ const formatTranscription = (result, options) => {
     // Validate result
     if (!result) {
       console.error('Invalid transcription result: result is null or undefined');
-      return fallbackTranscription(options);
+      return transcriptionErrorResponse(options, new Error('Invalid transcription result: result is null or undefined'));
     }
 
     // Extract text from result
@@ -293,10 +293,10 @@ const formatTranscription = (result, options) => {
       console.log(`Constructed text from ${sortedSegments.length} segments: "${text}"`);
     }
 
-    // If text is still empty, use fallback
+    // If text is still empty, return error
     if (!text || text.trim() === '') {
-      console.log('Empty transcription result, using fallback');
-      return fallbackTranscription(options);
+      console.log('Empty transcription result, returning error');
+      return transcriptionErrorResponse(options, new Error('No speech detected in audio'));
     }
 
     // Apply transcription style
@@ -475,87 +475,30 @@ const addTimestamps = (text, segments) => {
 };
 
 /**
- * Fallback transcription when Vosk fails
+ * Error response when transcription fails
  * @param {Object} options - Transcription options
- * @returns {Object} - Mock transcription result
+ * @param {Error} error - The error that caused the failure
+ * @returns {Object} - Error response
  */
-const fallbackTranscription = (options = {}) => {
-  console.log('Using fallback transcription');
+const transcriptionErrorResponse = (options = {}, error = null) => {
+  console.log('Transcription failed, returning error response');
 
-  // Generate a mock transcription based on the transcription style
-  let transcriptionText = '';
-  const style = options.style || 'clean';
-
-  // Sample transcriptions for different audio types
-  const transcriptions = [
-    {
-      verbatim: "Um, so in this Instagram Reel, I'm gonna, like, show you how to, um, make this really cool recipe that I, uh, learned from my grandmother. It's, you know, super easy and, like, really delicious.",
-      condensed: "In this Reel, I'll show you a cool recipe I learned from my grandmother. It's easy and delicious.",
-      clean: "In this Instagram Reel, I'm going to show you how to make this really cool recipe that I learned from my grandmother. It's super easy and really delicious."
-    },
-    {
-      verbatim: "Hey everyone, uh, welcome back to my channel. Today I'm, um, gonna be showing you this, like, amazing workout routine that I do, you know, every morning to, uh, stay fit and, like, energized throughout the day.",
-      condensed: "Welcome back! Today I'm showing you my morning workout routine that keeps me fit and energized all day.",
-      clean: "Hey everyone, welcome back to my channel. Today I'm going to be showing you this amazing workout routine that I do every morning to stay fit and energized throughout the day."
-    },
-    {
-      verbatim: "So, um, I just wanted to, like, share this quick tip about, uh, how to organize your, you know, digital files and stuff. It's been, like, super helpful for me and, um, might help you too.",
-      condensed: "Here's a quick tip about organizing digital files. It's been helpful for me and might help you too.",
-      clean: "I just wanted to share this quick tip about how to organize your digital files. It's been super helpful for me and might help you too."
-    }
-  ];
-
-  // Select a random transcription
-  const randomIndex = Math.floor(Math.random() * transcriptions.length);
-  const selectedTranscription = transcriptions[randomIndex];
-
-  switch (style) {
-    case 'verbatim':
-      transcriptionText = selectedTranscription.verbatim;
-      break;
-    case 'condensed':
-      transcriptionText = selectedTranscription.condensed;
-      break;
-    case 'clean':
-    default:
-      transcriptionText = selectedTranscription.clean;
-      break;
-  }
-
-  // Add timestamps if requested
-  if (options.includeTimestamps) {
-    transcriptionText = "[00:00] " + transcriptionText.replace(/\. /g, ".\n[00:05] ");
-  }
-
-  // Create mock segments for timestamps
-  const segments = [];
-  if (options.includeTimestamps) {
-    const words = transcriptionText.split(' ');
-    let currentTime = 0;
-
-    words.forEach((word) => {
-      segments.push({
-        word: word.replace(/[.,!?;:]/g, ''),
-        start: currentTime,
-        end: currentTime + 0.3,
-        conf: 0.9
-      });
-
-      currentTime += 0.4;
-    });
-  }
-
-  // Create the result object
+  // Create the error result object
   const result = {
-    text: transcriptionText,
+    text: '',
     language: 'en-US',
-    timestamps: options.includeTimestamps,
-    style: style,
-    segments: segments
+    timestamps: options.includeTimestamps || false,
+    style: options.style || 'clean',
+    segments: [],
+    error: {
+      message: 'Transcription failed. Unable to process audio.',
+      details: error ? error.message || String(error) : 'Unknown error',
+      code: 'TRANSCRIPTION_FAILED'
+    }
   };
 
-  // Log the fallback result for debugging
-  console.log('Using fallback transcription result:', JSON.stringify(result, null, 2));
+  // Log the error result for debugging
+  console.log('Transcription error response:', JSON.stringify(result, null, 2));
 
   return result;
 };
