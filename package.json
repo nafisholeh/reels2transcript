@@ -11,7 +11,9 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "setup:vosk": "pip3 install vosk pyaudio && mkdir -p models && cd models && curl -LO https://alphacephei.com/vosk/models/vosk-model-small-en-us-0.15.zip && unzip vosk-model-small-en-us-0.15.zip && mv vosk-model-small-en-us-0.15 vosk-model-en-us-small",
-    "setup:vosk-large": "pip3 install vosk pyaudio && mkdir -p models && cd models && curl -LO https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip && unzip vosk-model-en-us-0.22.zip && mv vosk-model-en-us-0.22 vosk-model-en-us-large"
+    "setup:vosk-large": "pip3 install vosk pyaudio && mkdir -p models && cd models && curl -LO https://alphacephei.com/vosk/models/vosk-model-en-us-0.22.zip && unzip vosk-model-en-us-0.22.zip && mv vosk-model-en-us-0.22 vosk-model-en-us-large",
+    "setup:instaloader": "pip3 install instaloader",
+    "login:instagram": "node login_to_instagram.js"
   },
   "dependencies": {
     "@emotion/react": "^11.14.0",

@@ -10,6 +10,7 @@ A web application that allows users to extract speech transcriptions and caption
 - Multiple output formats (Plain text, JSON, CSV, SRT)
 - Customizable transcription styles
 - Download transcriptions in selected format
+- Instagram authentication support to avoid rate limiting
 
 ## Tech Stack
 
@@ -21,13 +22,14 @@ A web application that allows users to extract speech transcriptions and caption
 - Speech Recognition: Vosk (offline speech recognition)
 - Audio Processing: FFmpeg
 
-## Features
+## Key Features
 
 - **Offline Speech Recognition**: Uses Vosk for local speech-to-text processing without sending data to external servers
 - **Multiple Model Support**: Automatically selects between small (40MB) and large (1.8GB) models based on availability
 - **Robust Error Handling**: Implements retry mechanisms and detailed error reporting
 - **Customizable Transcription**: Supports different transcription styles (verbatim, clean, condensed)
 - **Timestamp Support**: Option to include timestamps in transcriptions
+- **Instagram Authentication**: Supports login to avoid rate limiting and access more content
 
 ## Getting Started
 
@@ -109,7 +111,13 @@ A web application that allows users to extract speech transcriptions and caption
    └── vosk-model-small-en-us-0.15.zip  # Downloaded zip file (can be deleted after extraction)
    ```
 
-5. Start the development server
+5. (Optional but recommended) Set up Instagram authentication to avoid rate limiting
+   ```
+   node login_to_instagram.js
+   ```
+   Follow the prompts to log in with your Instagram credentials. This creates a session file that will be used by the application to avoid rate limiting.
+
+6. Start the development server
    ```
    npm run dev:all
    ```
@@ -124,6 +132,18 @@ A web application that allows users to extract speech transcriptions and caption
 ## Troubleshooting
 
 ### Common Issues
+
+#### Instagram 403 Forbidden Errors
+
+If you're getting 403 Forbidden errors when trying to access Instagram content:
+
+1. Instagram may be rate-limiting your requests. Try setting up authentication:
+   ```
+   node login_to_instagram.js
+   ```
+2. Follow the prompts to log in with your Instagram credentials
+3. The session will be saved and used automatically by the application
+4. If you still get 403 errors, wait a few hours before trying again as Instagram may have temporarily blocked your IP
 
 #### Empty Transcription Results
 

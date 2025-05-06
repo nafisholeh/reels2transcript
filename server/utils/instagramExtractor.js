@@ -24,94 +24,128 @@ if (!fs.existsSync(tempDir)) {
   fs.mkdirSync(tempDir, { recursive: true });
 }
 
+// Maximum number of retries for Instagram requests
+const MAX_RETRIES = 3;
+
+// Delay between retries (in milliseconds)
+const RETRY_DELAY = 2000;
+
 /**
  * Extract data from Instagram Reel URL
  * @param {string} url - Instagram Reel URL
  * @returns {Promise<Object>} - Extracted data
  */
 export const extractInstagramReelData = async (url) => {
-  try {
-    // Validate URL
-    if (!isValidInstagramUrl(url)) {
-      throw new Error('Invalid Instagram URL');
-    }
+  let retryCount = 0;
+  let lastError = null;
 
-    console.log(`Extracting data from Instagram Reel: ${url}`);
-
-    // Use instagram-url-direct to get the direct video URL
-    const instagramData = await instagramGetUrl(url);
-
-    if (!instagramData || !instagramData.url_list || instagramData.url_list.length === 0) {
-      throw new Error('Could not extract video URL from Instagram Reel');
-    }
-
-    console.log('Instagram data retrieved successfully');
-
-    // Get the first video URL from the list
-    const videoUrl = instagramData.url_list[0];
-    console.log(`Found video URL: ${videoUrl}`);
-
-    // Try to download media using Instaloader first
-    console.log('Attempting to download media using Instaloader...');
-    const instaloaderResult = await downloadMediaWithInstaloader(url);
-
-    let videoPath = '';
-    let caption = '';
-    let username = 'unknown';
-
-    if (instaloaderResult.videoPath && fs.existsSync(instaloaderResult.videoPath)) {
-      // Instaloader download successful
-      videoPath = instaloaderResult.videoPath;
-      caption = instaloaderResult.caption;
-      username = instaloaderResult.username || 'unknown';
-
-      console.log(`Successfully downloaded media with Instaloader to: ${videoPath}`);
-    } else {
-      // Fallback to legacy method if Instaloader fails
-      console.warn('Instaloader download failed, falling back to legacy method...');
-
-      // Extract username from post_info if available
-      if (instagramData.post_info) {
-        username = instagramData.post_info.owner_username || 'unknown';
-        console.log('Post info available:', JSON.stringify(instagramData.post_info, null, 2));
+  while (retryCount < MAX_RETRIES) {
+    try {
+      // Validate URL
+      if (!isValidInstagramUrl(url)) {
+        throw new Error('Invalid Instagram URL');
       }
 
-      // Download the video using the legacy method
-      videoPath = await downloadVideoLegacy(videoUrl, url);
+      console.log(`Extracting data from Instagram Reel: ${url} (attempt ${retryCount + 1}/${MAX_RETRIES})`);
 
-      if (!videoPath || !fs.existsSync(videoPath)) {
-        throw new Error('Failed to download video from Instagram Reel using both methods');
+      // Try to download media using Instaloader first (preferred method)
+      console.log('Attempting to download media using Instaloader...');
+      const instaloaderResult = await downloadMediaWithInstaloader(url);
+
+      let videoPath = '';
+      let caption = '';
+      let username = 'unknown';
+
+      if (instaloaderResult.videoPath && fs.existsSync(instaloaderResult.videoPath)) {
+        // Instaloader download successful
+        videoPath = instaloaderResult.videoPath;
+        caption = instaloaderResult.caption;
+        username = instaloaderResult.username || 'unknown';
+
+        console.log(`Successfully downloaded media with Instaloader to: ${videoPath}`);
+      } else {
+        // Fallback to legacy method if Instaloader fails
+        console.warn('Instaloader download failed, falling back to legacy method...');
+
+        // Use instagram-url-direct to get the direct video URL
+        const instagramData = await instagramGetUrl(url);
+
+        if (!instagramData || !instagramData.url_list || instagramData.url_list.length === 0) {
+          throw new Error('Could not extract video URL from Instagram Reel');
+        }
+
+        console.log('Instagram data retrieved successfully');
+
+        // Get the first video URL from the list
+        const videoUrl = instagramData.url_list[0];
+        console.log(`Found video URL: ${videoUrl}`);
+
+        // Extract username from post_info if available
+        if (instagramData.post_info) {
+          username = instagramData.post_info.owner_username || 'unknown';
+          console.log('Post info available:', JSON.stringify(instagramData.post_info, null, 2));
+        }
+
+        // Download the video using the legacy method
+        videoPath = await downloadVideoLegacy(videoUrl, url);
+
+        if (!videoPath || !fs.existsSync(videoPath)) {
+          throw new Error('Failed to download video from Instagram Reel using both methods');
+        }
+
+        // Extract caption using Instaloader
+        console.log('Attempting to extract caption using Instaloader...');
+        caption = await extractCaptionWithInstaloader(url);
+
+        // If caption extraction failed, set a default message
+        if (!caption || caption === 'Failed to extract caption') {
+          console.warn('Caption extraction failed, using default message');
+          caption = 'No caption available';
+        }
       }
 
-      // Extract caption using Instaloader
-      console.log('Attempting to extract caption using Instaloader...');
-      caption = await extractCaptionWithInstaloader(url);
+      console.log(`Video downloaded to: ${videoPath}`);
 
-      // If caption extraction failed, set a default message
-      if (!caption || caption === 'Failed to extract caption') {
-        console.warn('Caption extraction failed, using default message');
-        caption = 'No caption available';
+      // Verify the file exists and is not empty
+      const stats = fs.statSync(videoPath);
+      if (stats.size === 0) {
+        throw new Error('Downloaded video file is empty');
+      }
+
+      return {
+        url,
+        videoUrl: videoPath.startsWith('http') ? videoPath : `file://${videoPath}`,
+        videoPath,
+        caption,
+        username,
+        timestamp: new Date().toISOString()
+      };
+    } catch (error) {
+      lastError = error;
+      retryCount++;
+
+      // Log the error with specific details
+      console.error(`Instagram extraction attempt ${retryCount}/${MAX_RETRIES} failed:`, error);
+
+      if (error.message && error.message.includes('403')) {
+        console.error('Instagram returned a 403 Forbidden error. This usually means rate limiting or authentication is required.');
+      }
+
+      if (retryCount < MAX_RETRIES) {
+        console.log(`Retrying in ${RETRY_DELAY/1000} seconds...`);
+        // Wait before retrying
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
       }
     }
-
-    console.log(`Video downloaded to: ${videoPath}`);
-
-    return {
-      url,
-      videoUrl: videoPath.startsWith('http') ? videoPath : `file://${videoPath}`,
-      videoPath,
-      caption,
-      username,
-      timestamp: new Date().toISOString()
-    };
-  } catch (error) {
-    console.error('Error extracting Instagram Reel data:', error);
-    console.error(error.stack);
-
-    // Fallback to sample video if extraction fails
-    console.log('Falling back to sample video...');
-    return fallbackToSampleVideo(url);
   }
+
+  // All retries failed, use fallback
+  console.error(`All ${MAX_RETRIES} Instagram extraction attempts failed. Using fallback.`);
+  console.error('Last error:', lastError);
+
+  // Fallback to sample video if extraction fails
+  console.log('Falling back to sample video...');
+  return fallbackToSampleVideo(url);
 };
 
 /**
@@ -187,15 +221,58 @@ const downloadMediaWithInstaloader = async (url) => {
     const { stdout, stderr } = await execPromise(`python3 "${MEDIA_DOWNLOADER_SCRIPT}" "${url}" "${tempDir}"`);
 
     if (stderr) {
-      console.error(`Error from Instaloader media downloader: ${stderr}`);
+      // Log stderr but don't treat it as an error since Python scripts often output to stderr
+      console.log(`Debug output from Instaloader media downloader: ${stderr}`);
     }
 
     // Parse the JSON output from the Python script
     const result = JSON.parse(stdout);
 
     if (!result.success) {
-      console.error(`Failed to download media: ${result.error}`);
-      return { videoPath: '', caption: 'Failed to download media' };
+      // Check for specific error types
+      if (result.error && result.error.includes('Login required')) {
+        console.error(`Instagram login required: ${result.error}`);
+        return {
+          videoPath: '',
+          caption: 'Failed to download media: Login required',
+          error: 'LOGIN_REQUIRED'
+        };
+      } else if (result.error && result.error.includes('rate-limiting')) {
+        console.error(`Instagram rate limiting detected: ${result.error}`);
+        return {
+          videoPath: '',
+          caption: 'Failed to download media: Rate limited',
+          error: 'RATE_LIMITED'
+        };
+      } else {
+        console.error(`Failed to download media: ${result.error}`);
+        return {
+          videoPath: '',
+          caption: 'Failed to download media',
+          error: result.error
+        };
+      }
+    }
+
+    // Verify the media path exists
+    if (!result.media_path || !fs.existsSync(result.media_path)) {
+      console.error('Media path is invalid or file does not exist');
+      return {
+        videoPath: '',
+        caption: 'Failed to download media: File not found',
+        error: 'FILE_NOT_FOUND'
+      };
+    }
+
+    // Verify the file is not empty
+    const stats = fs.statSync(result.media_path);
+    if (stats.size === 0) {
+      console.error('Downloaded media file is empty');
+      return {
+        videoPath: '',
+        caption: 'Failed to download media: Empty file',
+        error: 'EMPTY_FILE'
+      };
     }
 
     console.log(`Successfully downloaded media to: ${result.media_path}`);
@@ -208,7 +285,22 @@ const downloadMediaWithInstaloader = async (url) => {
     };
   } catch (error) {
     console.error('Error downloading media with Instaloader:', error);
-    return { videoPath: '', caption: 'Failed to download media' };
+
+    // Check for specific error types
+    if (error.message && error.message.includes('JSON')) {
+      console.error('Error parsing JSON output from Python script');
+      return {
+        videoPath: '',
+        caption: 'Failed to download media: JSON parsing error',
+        error: 'JSON_PARSE_ERROR'
+      };
+    }
+
+    return {
+      videoPath: '',
+      caption: 'Failed to download media',
+      error: error.message
+    };
   }
 };
 
@@ -281,30 +373,60 @@ const downloadVideoLegacy = async (videoUrl, originalUrl) => {
  * @returns {Promise<string>} - Extracted caption
  */
 const extractCaptionWithInstaloader = async (url) => {
-  try {
-    console.log(`Extracting caption with Instaloader from: ${url}`);
+  let retryCount = 0;
 
-    // Run the Python script to extract the caption
-    const { stdout, stderr } = await execPromise(`python3 "${CAPTION_EXTRACTOR_SCRIPT}" "${url}"`);
+  while (retryCount < MAX_RETRIES) {
+    try {
+      console.log(`Extracting caption with Instaloader from: ${url} (attempt ${retryCount + 1}/${MAX_RETRIES})`);
 
-    if (stderr) {
-      console.error(`Error from Instaloader script: ${stderr}`);
+      // Run the Python script to extract the caption
+      const { stdout, stderr } = await execPromise(`python3 "${CAPTION_EXTRACTOR_SCRIPT}" "${url}"`);
+
+      if (stderr) {
+        // Log stderr but don't treat it as an error since Python scripts often output to stderr
+        console.log(`Debug output from Instaloader caption extractor: ${stderr}`);
+      }
+
+      // Parse the JSON output from the Python script
+      const result = JSON.parse(stdout);
+
+      if (!result.success) {
+        // Check for specific error types
+        if (result.error && result.error.includes('Login required')) {
+          console.error(`Instagram login required for caption extraction: ${result.error}`);
+          return 'No caption available (login required)';
+        } else if (result.error && result.error.includes('rate-limiting')) {
+          console.error(`Instagram rate limiting detected during caption extraction: ${result.error}`);
+          // Retry after delay
+          retryCount++;
+          if (retryCount < MAX_RETRIES) {
+            console.log(`Retrying caption extraction in ${RETRY_DELAY/1000} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            continue;
+          }
+          return 'No caption available (rate limited)';
+        } else {
+          console.error(`Failed to extract caption: ${result.error}`);
+          return 'No caption available';
+        }
+      }
+
+      console.log(`Successfully extracted caption: "${result.caption.substring(0, 50)}..."`);
+      return result.caption;
+    } catch (error) {
+      console.error(`Error extracting caption with Instaloader (attempt ${retryCount + 1}/${MAX_RETRIES}):`, error);
+
+      retryCount++;
+      if (retryCount < MAX_RETRIES) {
+        console.log(`Retrying caption extraction in ${RETRY_DELAY/1000} seconds...`);
+        await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+      } else {
+        return 'Failed to extract caption';
+      }
     }
-
-    // Parse the JSON output from the Python script
-    const result = JSON.parse(stdout);
-
-    if (!result.success) {
-      console.error(`Failed to extract caption: ${result.error}`);
-      return 'Failed to extract caption';
-    }
-
-    console.log(`Successfully extracted caption: "${result.caption.substring(0, 50)}..."`);
-    return result.caption;
-  } catch (error) {
-    console.error('Error extracting caption with Instaloader:', error);
-    return 'Failed to extract caption';
   }
+
+  return 'Failed to extract caption after multiple attempts';
 };
 
 /**
